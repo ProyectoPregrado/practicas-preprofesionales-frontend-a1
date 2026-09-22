@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Chip } from '@/components/Chip'
 import { HourLogForm } from '@/components/HourLogForm'
 import { HoursProgressPanel } from '@/components/HoursProgressPanel'
 import { PageHeader } from '@/components/PageHeader'
@@ -68,10 +69,20 @@ function HourLogsList({ logs }: { logs: LocalHourLog[] }) {
               {log.startTime}–{log.endTime}
             </span>
             <span className="font-data text-14 text-ink sm:w-14">{log.hours}</span>
-            <span className="flex-1 text-14 text-inkBody">{log.activity}</span>
-            <span className="sm:w-32 sm:text-right">
+            <div className="flex-1 text-14 text-inkBody">
+              <div>{log.activity}</div>
+              {log.syncState === 'failed' && (
+                <div className="mt-0.5 text-12 font-medium text-void">
+                  Fallo permanente: {log.reviewNote || 'Error en la sincronización'}
+                </div>
+              )}
+            </div>
+            <div className="flex flex-col items-end gap-1 sm:w-32 sm:text-right">
               <StatusBadge status={log.status} />
-            </span>
+              {log.syncState === 'failed' && (
+                <Chip tone="void">Fallo permanente</Chip>
+              )}
+            </div>
           </LedgerRow>
         ))}
     </Ledger>

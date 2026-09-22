@@ -23,7 +23,7 @@ const GUTTER: Record<SyncState, { label: string; className: string; style?: CSSP
     className: 'bg-stamp border border-stamp',
   },
   failed: {
-    label: 'Rechazado',
+    label: 'Rechazado (fallo permanente)',
     className: 'border border-dotVoid',
     style: {
       backgroundImage:

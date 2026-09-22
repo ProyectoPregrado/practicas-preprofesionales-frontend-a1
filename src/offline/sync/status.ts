@@ -3,15 +3,19 @@ export interface SyncStatus {
   pending: number
   lastSyncAt: string | null
   syncing: boolean
+  retrying?: boolean
+  failed?: number
 }
 
 type Listener = () => void
 
 let state: SyncStatus = {
-  online: navigator.onLine,
+  online: typeof navigator !== 'undefined' ? navigator.onLine : true,
   pending: 0,
   lastSyncAt: null,
   syncing: false,
+  retrying: false,
+  failed: 0,
 }
 
 const listeners = new Set<Listener>()
