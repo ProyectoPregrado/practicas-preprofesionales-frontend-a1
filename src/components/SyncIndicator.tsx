@@ -13,9 +13,44 @@ function formatTime(iso: string | null): string {
   return `${hh}:${mm}`
 }
 
+function FailedNotice({ count }: { count: number }) {
+  if (count <= 0) return null
+  return (
+    <p className="mt-1 text-12 font-semibold text-void">
+      {count} {count === 1 ? 'fallo permanente' : 'fallos permanentes'}
+    </p>
+  )
+}
+
+function RetryNotice({ retrying }: { retrying: boolean | undefined }) {
+  if (!retrying) return null
+  return (
+    <p className="mt-1 text-12 font-medium text-pending">
+      Reintentando envío…
+    </p>
+  )
+}
+
+function ConnectionStatus({ online }: { online: boolean }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        aria-hidden="true"
+        className={cn(
+          'inline-block size-2.5 flex-none rounded-full border',
+          online ? 'border-stamp bg-stamp' : 'border-2 border-void bg-transparent',
+        )}
+      />
+      <span className={cn('text-13 font-semibold', online ? 'text-ink' : 'text-void')}>
+        {online ? 'En línea' : 'Sin conexión'}
+      </span>
+    </div>
+  )
+}
+
 export function SyncIndicator() {
   const online = useOnline()
-  const { pending, lastSyncAt, syncing } = useSyncStatus()
+  const { pending, lastSyncAt, syncing, retrying, failed = 0 } = useSyncStatus()
   const [triggering, setTriggering] = useState(false)
 
   const busy = syncing || triggering
@@ -35,19 +70,7 @@ export function SyncIndicator() {
       aria-live="polite"
       className="flex-none rounded-lg bg-surface px-3.5 py-3"
     >
-      <div className="flex items-center gap-2">
-        {/* Relleno además de color: sólido en línea, hueco sin conexión. */}
-        <span
-          aria-hidden="true"
-          className={cn(
-            'inline-block size-2.5 flex-none rounded-full border',
-            online ? 'border-stamp bg-stamp' : 'border-2 border-void bg-transparent',
-          )}
-        />
-        <span className={cn('text-13 font-semibold', online ? 'text-ink' : 'text-void')}>
-          {online ? 'En línea' : 'Sin conexión'}
-        </span>
-      </div>
+      <ConnectionStatus online={online} />
 
       <p className="mt-1 text-12 leading-relaxed text-inkSoft">
         <span className={cn('font-data', pending > 0 && 'font-semibold text-pending')}>
@@ -56,6 +79,9 @@ export function SyncIndicator() {
         {' · último sync '}
         <span className="font-data">{formatTime(lastSyncAt)}</span>
       </p>
+
+      <RetryNotice retrying={retrying} />
+      <FailedNotice count={failed} />
 
       <Button
         type="button"

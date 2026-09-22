@@ -16,13 +16,13 @@ El test `conserva la operación cuando la red falla antes del acuse del servidor
 3. Ejecuta `pushOutbox` y comprueba que el error ocurre antes de recibir un acuse.
 4. Exige que la operación siga en el outbox y que la hora continúe en estado `queued`.
 
-Con la implementación heredada, el paso 4 falla: `pushOutbox` ejecuta `bulkDelete` antes
-del `POST`, por lo que el contador queda en cero cuando la petición rechaza. El caso usa
-`it.fails` para que Vitest ejecute y confirme el defecto conocido sin dejar rojo el CI del
-Spike. Si la implementación deja de reproducir la pérdida, Vitest lo reportará como un
-fallo inesperado hasta retirar ese modificador.
+Con la implementación heredada, el paso 4 fallaba: `pushOutbox` ejecutaba `bulkDelete`
+antes del `POST`, por lo que el contador quedaba en cero cuando la petición rechazaba. El
+test permitió reproducir el defecto de forma determinista. Tras actualizar la rama con el
+`develop` que conserva y registra los reintentos, el mismo caso pasa normalmente y queda
+como prueba de regresión.
 
-## Orden exacto del fallo
+## Orden original del fallo
 
 1. Se leen hasta 500 operaciones del outbox.
 2. Se construye el payload y se conserva en memoria la relación entre IDs locales y
@@ -44,9 +44,9 @@ fallo inesperado hasta retirar ese modificador.
 La limitación está reflejada también por el tipo `OutboxEntry`, cuyo campo `entity` solo
 acepta `hourLog`, y por la arquitectura documentada en el README.
 
-## Transferencia a E1-02
+## Estado tras actualizar con develop
 
-La corrección debe mover la eliminación del outbox después de una respuesta válida y
-purgar únicamente las operaciones confirmadas. Tras el cambio, se debe retirar `fails` sin
-modificar las expectativas del test; entonces el caso debe pasar normalmente y debe
-mantenerse la reconciliación de IDs locales con los IDs asignados por el servidor.
+La implementación actual elimina del outbox únicamente las operaciones incluidas en una
+respuesta válida. Si la red falla, conserva la operación, incrementa `attempts` y registra
+`lastError`. La prueba E1-01 ya no usa `it.fails`: pasa sin modificar sus expectativas y
+protege la reconciliación de IDs locales con los IDs asignados por el servidor.
