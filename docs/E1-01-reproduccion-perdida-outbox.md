@@ -17,9 +17,10 @@ El test `conserva la operación cuando la red falla antes del acuse del servidor
 4. Exige que la operación siga en el outbox y que la hora continúe en estado `queued`.
 
 Con la implementación heredada, el paso 4 falla: `pushOutbox` ejecuta `bulkDelete` antes
-del `POST`, por lo que el contador queda en cero cuando la petición rechaza. El test queda
-deliberadamente en rojo para entregar a E1-02 una reproducción que pasará cuando la cola
-se purgue solamente después del acuse del servidor.
+del `POST`, por lo que el contador queda en cero cuando la petición rechaza. El caso usa
+`it.fails` para que Vitest ejecute y confirme el defecto conocido sin dejar rojo el CI del
+Spike. Si la implementación deja de reproducir la pérdida, Vitest lo reportará como un
+fallo inesperado hasta retirar ese modificador.
 
 ## Orden exacto del fallo
 
@@ -46,6 +47,6 @@ acepta `hourLog`, y por la arquitectura documentada en el README.
 ## Transferencia a E1-02
 
 La corrección debe mover la eliminación del outbox después de una respuesta válida y
-purgar únicamente las operaciones confirmadas. Tras el cambio, este test debe pasar sin
-modificar sus expectativas y debe mantenerse la reconciliación de IDs locales con los
-IDs asignados por el servidor.
+purgar únicamente las operaciones confirmadas. Tras el cambio, se debe retirar `fails` sin
+modificar las expectativas del test; entonces el caso debe pasar normalmente y debe
+mantenerse la reconciliación de IDs locales con los IDs asignados por el servidor.
