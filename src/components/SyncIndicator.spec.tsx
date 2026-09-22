@@ -1,8 +1,46 @@
 import { render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as onlineHooks from '@/offline/hooks/useOnline'
+import * as syncStatusHooks from '@/offline/hooks/useSyncStatus'
 import { CrossTabChannel, resetCrossTabForTesting } from '@/offline/sync/crossTab'
 import { _resetStatusForTesting } from '@/offline/sync/status'
 import { SyncIndicator } from './SyncIndicator'
+
+describe('SyncIndicator', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('muestra aviso de reintento cuando retrying es true', () => {
+    vi.spyOn(onlineHooks, 'useOnline').mockReturnValue(true)
+    vi.spyOn(syncStatusHooks, 'useSyncStatus').mockReturnValue({
+      online: true,
+      pending: 1,
+      lastSyncAt: null,
+      syncing: false,
+      retrying: true,
+      failed: 0,
+    })
+
+    render(<SyncIndicator />)
+    expect(screen.getByText(/reintentando envío/i)).toBeInTheDocument()
+  })
+
+  it('muestra conteo de fallos permanentes cuando failed es mayor a 0', () => {
+    vi.spyOn(onlineHooks, 'useOnline').mockReturnValue(true)
+    vi.spyOn(syncStatusHooks, 'useSyncStatus').mockReturnValue({
+      online: true,
+      pending: 0,
+      lastSyncAt: null,
+      syncing: false,
+      retrying: false,
+      failed: 2,
+    })
+
+    render(<SyncIndicator />)
+    expect(screen.getByText(/2 fallos permanentes/i)).toBeInTheDocument()
+  })
+})
 
 describe('SyncIndicator cross-tab reactivity', () => {
   beforeEach(() => {
@@ -12,6 +50,7 @@ describe('SyncIndicator cross-tab reactivity', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     resetCrossTabForTesting()
     _resetStatusForTesting()
     localStorage.clear()

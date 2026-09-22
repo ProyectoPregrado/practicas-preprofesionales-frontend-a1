@@ -5,6 +5,8 @@ export interface SyncStatus {
   pending: number
   lastSyncAt: string | null
   syncing: boolean
+  retrying?: boolean
+  failed?: number
 }
 
 type Listener = () => void
@@ -50,6 +52,8 @@ let state: SyncStatus = {
   pending: cached?.pending ?? 0,
   lastSyncAt: cached?.lastSyncAt ?? null,
   syncing: false,
+  retrying: false,
+  failed: 0,
 }
 
 const listeners = new Set<Listener>()
@@ -114,6 +118,8 @@ export function _resetStatusForTesting(): void {
     pending: 0,
     lastSyncAt: null,
     syncing: false,
+    retrying: false,
+    failed: 0,
   }
   listeners.clear()
   if (typeof localStorage !== 'undefined') {
