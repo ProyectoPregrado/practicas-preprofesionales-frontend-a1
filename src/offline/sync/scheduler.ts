@@ -1,4 +1,5 @@
 import { db } from '@/offline/db'
+import { getCrossTabChannel, getCrossTabLock, waitForSyncCompletion } from './crossTab'
 import { pullChanges } from './pull'
 import { pushOutbox } from './push'
 import { setStatus } from './status'
@@ -9,7 +10,7 @@ const SYNC_INTERVAL_MS = 60_000
 const MAX_PULL_ROUNDS = 20
 
 function hasSession(): boolean {
-  return Boolean(localStorage.getItem('access_token'))
+  return typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('access_token'))
 }
 
 let currentSync: Promise<void> | null = null
@@ -17,7 +18,17 @@ let currentSync: Promise<void> | null = null
 async function runSync(): Promise<void> {
   if (!hasSession()) return
 
+  // Evita ciclos concurrentes duplicados sobre la cola local de Dexie desde pestañas simultáneas
+  const lock = getCrossTabLock()
+  const acquired = lock.acquire()
+  if (!acquired) {
+    // Si otra pestaña ya está sincronizando, esperamos a que termine en lugar de duplicar la corrida
+    await waitForSyncCompletion()
+    return
+  }
+
   setStatus({ syncing: true })
+  getCrossTabChannel().postMessage('SYNC_START')
 
   try {
     let hasMore = true
@@ -30,11 +41,20 @@ async function runSync(): Promise<void> {
 
     await pushOutbox()
 
-    setStatus({ syncing: false, lastSyncAt: new Date().toISOString() })
-    setStatus({ pending: await db.outbox.count() })
+    const pending = await db.outbox.count()
+    // Notificación unificada para evitar ventana inconsistente (D-08)
+    setStatus({
+      syncing: false,
+      lastSyncAt: new Date().toISOString(),
+      pending,
+    })
   } catch (err) {
     console.error('sincronización falló', err)
-    setStatus({ syncing: false })
+    const pending = await db.outbox.count()
+    setStatus({ syncing: false, pending })
+  } finally {
+    lock.release()
+    getCrossTabChannel().postMessage('SYNC_END')
   }
 }
 
