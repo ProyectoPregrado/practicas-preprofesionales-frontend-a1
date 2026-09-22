@@ -82,6 +82,34 @@ describe('pushOutbox', () => {
     await expect(db.hourLogs.get(10)).resolves.toMatchObject({ syncState: 'synced', version: 2 })
   })
 
+  it('conserva la operación cuando la red falla antes del acuse del servidor', async () => {
+    await db.hourLogs.put({
+      id: -11,
+      placementId: 1,
+      date: '2026-09-18',
+      startTime: '08:00',
+      endTime: '12:00',
+      hours: 4,
+      activity: 'Trabajo sin conexión',
+      status: 'SUBMITTED',
+      version: 1,
+      updatedAt: '2026-09-18T12:00:00.000Z',
+      syncState: 'local',
+    })
+    await enqueue({
+      entity: 'hourLog',
+      op: 'create',
+      payload: { id: -11, hours: 4 },
+      baseVersion: null,
+    })
+    mockedApi.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+    await expect(pushOutbox()).rejects.toThrow('Failed to fetch')
+
+    await expect(db.outbox.count()).resolves.toBe(1)
+    await expect(db.hourLogs.get(-11)).resolves.toMatchObject({ syncState: 'queued' })
+  })
+
   it('persiste contador de intentos y último error en campos nativos de Dexie tras fallo de red', async () => {
     await db.hourLogs.put({
       id: 11,
@@ -155,5 +183,43 @@ describe('pushOutbox', () => {
     const localLog = await db.hourLogs.get(12)
     expect(localLog?.syncState).toBe('failed')
     expect(localLog?.reviewNote).toContain('Servidor inalcanzable')
+  })
+
+  it('purga sin enviar las entradas que ya alcanzaron maxAttempts', async () => {
+    await db.hourLogs.put({
+      id: 99,
+      placementId: 1,
+      date: '2026-04-01',
+      startTime: '08:00',
+      endTime: '12:00',
+      hours: 4,
+      activity: 'Operación agotada',
+      status: 'SUBMITTED',
+      version: 1,
+      updatedAt: '2026-04-01T00:00:00.000Z',
+      syncState: 'local',
+    })
+    await enqueue({
+      entity: 'hourLog',
+      op: 'create',
+      payload: { id: 99, hours: 4 },
+      baseVersion: null,
+    })
+
+    const [entry] = await db.outbox.toArray()
+    await db.outbox.update(entry.id!, {
+      attempts: 3,
+      lastError: 'Fallo previo',
+    })
+
+    const result = await pushOutbox({ maxAttempts: 3 })
+
+    expect(result).toEqual({ applied: 0, failed: 1 })
+    expect(api).not.toHaveBeenCalled()
+    await expect(db.outbox.count()).resolves.toBe(0)
+    await expect(db.hourLogs.get(99)).resolves.toMatchObject({
+      syncState: 'failed',
+      reviewNote: expect.stringContaining('Fallo previo'),
+    })
   })
 })
