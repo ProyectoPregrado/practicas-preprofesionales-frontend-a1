@@ -81,4 +81,32 @@ describe('pushOutbox', () => {
     await expect(db.outbox.count()).resolves.toBe(0)
     await expect(db.hourLogs.get(10)).resolves.toMatchObject({ syncState: 'synced', version: 2 })
   })
+
+  it('conserva la operación cuando la red falla antes del acuse del servidor', async () => {
+    await db.hourLogs.put({
+      id: -11,
+      placementId: 1,
+      date: '2026-09-18',
+      startTime: '08:00',
+      endTime: '12:00',
+      hours: 4,
+      activity: 'Trabajo sin conexión',
+      status: 'SUBMITTED',
+      version: 1,
+      updatedAt: '2026-09-18T12:00:00.000Z',
+      syncState: 'local',
+    })
+    await enqueue({
+      entity: 'hourLog',
+      op: 'create',
+      payload: { id: -11, hours: 4 },
+      baseVersion: null,
+    })
+    mockedApi.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+    await expect(pushOutbox()).rejects.toThrow('Failed to fetch')
+
+    await expect(db.outbox.count()).resolves.toBe(1)
+    await expect(db.hourLogs.get(-11)).resolves.toMatchObject({ syncState: 'queued' })
+  })
 })
