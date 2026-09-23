@@ -228,6 +228,54 @@ describe('pushOutbox', () => {
     })
   })
 
+  it('conserva en cola solo las operaciones que el servidor no confirmó en un lote parcial', async () => {
+    await db.hourLogs.bulkPut([
+      {
+        id: 14,
+        placementId: 1,
+        date: '2026-04-01',
+        startTime: '08:00',
+        endTime: '12:00',
+        hours: 4,
+        activity: 'Confirmada',
+        status: 'SUBMITTED',
+        version: 1,
+        updatedAt: '2026-04-01T00:00:00.000Z',
+        syncState: 'local',
+      },
+      {
+        id: 15,
+        placementId: 1,
+        date: '2026-04-02',
+        startTime: '08:00',
+        endTime: '12:00',
+        hours: 4,
+        activity: 'Sin confirmar',
+        status: 'SUBMITTED',
+        version: 1,
+        updatedAt: '2026-04-02T00:00:00.000Z',
+        syncState: 'local',
+      },
+    ])
+    await enqueue({ entity: 'hourLog', op: 'create', payload: { id: 14, hours: 4 }, baseVersion: null })
+    await enqueue({ entity: 'hourLog', op: 'create', payload: { id: 15, hours: 4 }, baseVersion: null })
+    const outboxEntries = await db.outbox.toArray()
+    const confirmedEntry = outboxEntries.find((e) => e.payload.id === 14)!
+
+    mockedApi.mockResolvedValue({
+      results: [
+        { clientOpId: confirmedEntry.clientOpId, status: 'applied', server: { id: 14, version: 2 }, reason: null },
+      ],
+    })
+
+    const result = await pushOutbox()
+
+    expect(result).toEqual({ applied: 1, failed: 0 })
+    await expect(db.outbox.count()).resolves.toBe(1)
+    await expect(db.hourLogs.get(14)).resolves.toMatchObject({ syncState: 'synced', version: 2 })
+    await expect(db.hourLogs.get(15)).resolves.toMatchObject({ syncState: 'queued' })
+  })
+
   it('purga sin enviar las entradas que ya alcanzaron maxAttempts', async () => {
     await db.hourLogs.put({
       id: 99,
