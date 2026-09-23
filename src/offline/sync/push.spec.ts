@@ -185,6 +185,49 @@ describe('pushOutbox', () => {
     expect(localLog?.reviewNote).toContain('Servidor inalcanzable')
   })
 
+  it('marca visible el motivo cuando el servidor rechaza la operación, sin dejarla en la cola', async () => {
+    await db.hourLogs.put({
+      id: 13,
+      placementId: 1,
+      date: '2026-04-01',
+      startTime: '08:00',
+      endTime: '12:00',
+      hours: 4,
+      activity: 'Soporte',
+      status: 'SUBMITTED',
+      version: 1,
+      updatedAt: '2026-04-01T00:00:00.000Z',
+      syncState: 'local',
+    })
+    await enqueue({
+      entity: 'hourLog',
+      op: 'create',
+      payload: { id: 13, hours: 4 },
+      baseVersion: null,
+    })
+    const [entry] = await db.outbox.toArray()
+
+    mockedApi.mockResolvedValue({
+      results: [
+        {
+          clientOpId: entry.clientOpId,
+          status: 'rejected',
+          server: null,
+          reason: 'La hora ya fue aprobada por el tutor',
+        },
+      ],
+    })
+
+    const result = await pushOutbox()
+
+    expect(result).toEqual({ applied: 0, failed: 1 })
+    await expect(db.outbox.count()).resolves.toBe(0)
+    await expect(db.hourLogs.get(13)).resolves.toMatchObject({
+      syncState: 'failed',
+      reviewNote: 'La hora ya fue aprobada por el tutor',
+    })
+  })
+
   it('purga sin enviar las entradas que ya alcanzaron maxAttempts', async () => {
     await db.hourLogs.put({
       id: 99,
