@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { db } from '@/offline/db'
+import { CrossTabChannel, getCrossTabLock, resetCrossTabForTesting } from './crossTab'
 import { pullChanges } from './pull'
 import { pushOutbox } from './push'
 import { cancelRetry, getRetryTimer, setRetryConfig, startSync, syncNow } from './scheduler'
-import { getStatus, setStatus, subscribe, type SyncStatus } from './status'
+import { _resetStatusForTesting, getStatus, setStatus, subscribe, type SyncStatus } from './status'
 
 vi.mock('./pull', () => ({ pullChanges: vi.fn() }))
 vi.mock('./push', () => ({ pushOutbox: vi.fn() }))
@@ -15,6 +16,8 @@ beforeEach(async () => {
   await db.delete()
   await db.open()
   localStorage.clear()
+  resetCrossTabForTesting()
+  _resetStatusForTesting()
   mockedPull.mockReset()
   mockedPush.mockReset()
   cancelRetry()
@@ -26,6 +29,12 @@ beforeEach(async () => {
     failed: 0,
     lastSyncAt: null,
   })
+})
+
+afterEach(() => {
+  resetCrossTabForTesting()
+  _resetStatusForTesting()
+  localStorage.clear()
 })
 
 describe('syncNow', () => {
@@ -50,7 +59,7 @@ describe('syncNow', () => {
     expect(getStatus().syncing).toBe(false)
   })
 
-  it('reutiliza la corrida en curso si ya hay una sincronización en vuelo', async () => {
+  it('reutiliza la corrida en curso si ya hay una sincronización en vuelo en la misma pestaña', async () => {
     localStorage.setItem('access_token', 'tok')
     mockedPull.mockResolvedValue({ applied: 0, hasMore: false })
     mockedPush.mockResolvedValue({ applied: 0, failed: 0 })
@@ -155,6 +164,54 @@ describe('syncNow', () => {
     // Intento 3 -> 4000 ms (4s)
     expect(getStatus().retrying).toBe(true)
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 4000)
+  })
+
+  it('evita ciclos concurrentes duplicados sobre Dexie cuando otra pestaña ya está sincronizando', async () => {
+    localStorage.setItem('access_token', 'tok')
+    mockedPull.mockResolvedValue({ applied: 0, hasMore: false })
+    mockedPush.mockResolvedValue({ applied: 0, failed: 0 })
+
+    // Simulamos que la Pestaña A adquirió el bloqueo entre pestañas
+    const lock = getCrossTabLock()
+    localStorage.setItem(
+      lock.lockKey,
+      JSON.stringify({ owner: 'tab_a', acquiredAt: Date.now() }),
+    )
+
+    // Simulamos que la Pestaña B intenta syncNow() mientras Pestaña A tiene el lock
+    let syncFinished = false
+    const syncPromise = syncNow().then(() => {
+      syncFinished = true
+    })
+
+    // syncNow de la Pestaña B no debió ejecutar pull ni push
+    expect(mockedPull).not.toHaveBeenCalled()
+    expect(mockedPush).not.toHaveBeenCalled()
+    expect(syncFinished).toBe(false)
+
+    // Simulamos que la Pestaña A termina y emite SYNC_END
+    const channelTabA = new CrossTabChannel('offline_sync_channel', 'tab_a')
+    channelTabA.postMessage('SYNC_END')
+
+    await syncPromise
+    expect(syncFinished).toBe(true)
+
+    // Se confirma que nunca se duplicó la ejecución sobre la cola local
+    expect(mockedPull).not.toHaveBeenCalled()
+    expect(mockedPush).not.toHaveBeenCalled()
+
+    channelTabA.close()
+  })
+
+  it('libera el bloqueo al terminar o al fallar para permitir futuras sincronizaciones', async () => {
+    localStorage.setItem('access_token', 'tok')
+    mockedPull.mockResolvedValue({ applied: 0, hasMore: false })
+    mockedPush.mockResolvedValue({ applied: 0, failed: 0 })
+
+    await syncNow()
+
+    const lock = getCrossTabLock()
+    expect(lock.isLocked()).toBe(false)
   })
 })
 

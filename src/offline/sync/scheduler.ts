@@ -1,5 +1,6 @@
 import { db } from '@/offline/db'
 import { calculateBackoff, DEFAULT_RETRY_CONFIG, type RetryConfig } from './backoff'
+import { getCrossTabChannel, getCrossTabLock, waitForSyncCompletion } from './crossTab'
 import { pullChanges } from './pull'
 import { pushOutbox } from './push'
 import { setStatus } from './status'
@@ -80,8 +81,18 @@ async function runSync(): Promise<void> {
     return
   }
 
+  // Evita ciclos concurrentes duplicados sobre la cola local de Dexie desde pestañas simultáneas
+  const lock = getCrossTabLock()
+  const acquired = lock.acquire()
+  if (!acquired) {
+    // Si otra pestaña ya está sincronizando, esperamos a que termine en lugar de duplicar la corrida
+    await waitForSyncCompletion()
+    return
+  }
+
   cancelRetry()
   setStatus({ syncing: true })
+  getCrossTabChannel().postMessage('SYNC_START')
 
   try {
     await pullAllRounds()
@@ -106,6 +117,9 @@ async function runSync(): Promise<void> {
     setStatus({ syncing: false, pending, failed })
 
     await scheduleNextRetry(pending)
+  } finally {
+    lock.release()
+    getCrossTabChannel().postMessage('SYNC_END')
   }
 }
 
