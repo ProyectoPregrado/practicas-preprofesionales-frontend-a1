@@ -4,7 +4,7 @@ import { CrossTabChannel, getCrossTabLock, resetCrossTabForTesting } from './cro
 import { pullChanges } from './pull'
 import { pushOutbox } from './push'
 import { cancelRetry, getRetryTimer, setRetryConfig, startSync, syncNow } from './scheduler'
-import { _resetStatusForTesting, getStatus, setStatus } from './status'
+import { _resetStatusForTesting, getStatus, setStatus, subscribe, type SyncStatus } from './status'
 
 vi.mock('./pull', () => ({ pullChanges: vi.fn() }))
 vi.mock('./push', () => ({ pushOutbox: vi.fn() }))
@@ -21,7 +21,14 @@ beforeEach(async () => {
   mockedPull.mockReset()
   mockedPush.mockReset()
   cancelRetry()
-  setStatus({ online: true, syncing: false, retrying: false, pending: 0, failed: 0 })
+  setStatus({
+    online: true,
+    syncing: false,
+    retrying: false,
+    pending: 0,
+    failed: 0,
+    lastSyncAt: null,
+  })
 })
 
 afterEach(() => {
@@ -60,6 +67,41 @@ describe('syncNow', () => {
     await Promise.all([syncNow(), syncNow()])
 
     expect(mockedPush).toHaveBeenCalledTimes(1)
+  })
+
+  it('publica el estado final con pendientes en una sola transición', async () => {
+    localStorage.setItem('access_token', 'tok')
+    mockedPull.mockResolvedValue({ applied: 0, hasMore: false })
+    mockedPush.mockResolvedValue({ applied: 0, failed: 0 })
+    await db.outbox.add({
+      clientOpId: 'pendiente-1',
+      entity: 'hourLog',
+      op: 'create',
+      payload: { id: -1 },
+      baseVersion: null,
+      createdAt: '2026-09-18T12:00:00.000Z',
+      attempts: 0,
+      lastError: null,
+    })
+
+    const transitions: SyncStatus[] = []
+    const unsubscribe = subscribe(() => transitions.push({ ...getStatus() }))
+
+    try {
+      await syncNow()
+    } finally {
+      unsubscribe()
+    }
+
+    const syncingIndex = transitions.findIndex(({ syncing }) => syncing)
+    expect(syncingIndex).toBeGreaterThanOrEqual(0)
+
+    const completed = transitions.slice(syncingIndex + 1).filter(({ syncing }) => !syncing)
+    expect(completed).toHaveLength(1)
+    expect(completed[0]).toMatchObject({
+      pending: 1,
+      lastSyncAt: expect.any(String),
+    })
   })
 
   it('atrapa errores de red y deja de sincronizar sin propagar la excepción', async () => {
