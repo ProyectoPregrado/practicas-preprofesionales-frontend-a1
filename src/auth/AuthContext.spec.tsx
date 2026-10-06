@@ -132,4 +132,50 @@ describe('AuthProvider', () => {
     expect(await db.placements.count()).toBe(0)
     expect(await db.meta.count()).toBe(0)
   })
+
+  it('logout broadcasts LOGOUT message to crossTabChannel', async () => {
+    const { getCrossTabChannel } = await import('@/offline/sync/crossTab')
+    const channel = getCrossTabChannel()
+    const postMessageSpy = vi.spyOn(channel, 'postMessage')
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-123',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+    
+    await act(async () => {
+      await result.current.logout()
+    })
+
+    expect(postMessageSpy).toHaveBeenCalledWith('LOGOUT')
+  })
+
+  it('logs out automatically when receiving LOGOUT message from crossTabChannel', async () => {
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-123',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+
+    const { CrossTabChannel } = await import('@/offline/sync/crossTab')
+    
+    
+    await act(async () => {
+      const otherTabChannel = new CrossTabChannel('offline_sync_channel', 'other-tab')
+      otherTabChannel.postMessage('LOGOUT')
+      otherTabChannel.close()
+    })
+
+    await vi.waitFor(() => {
+      expect(result.current.user).toBeNull()
+    })
+  })
 })
