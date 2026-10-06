@@ -166,7 +166,7 @@ describe('AuthProvider', () => {
     })
 
     const { getCrossTabChannel, CrossTabChannel } = await import('@/offline/sync/crossTab')
-    const channel = getCrossTabChannel()
+    
     
     await act(async () => {
       const otherTabChannel = new CrossTabChannel('offline_sync_channel', 'other-tab')
