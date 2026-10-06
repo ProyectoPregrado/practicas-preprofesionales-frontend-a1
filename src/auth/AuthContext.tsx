@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '@/api/client'
 import { db } from '@/offline/db'
+import { getCrossTabChannel } from '@/offline/sync/crossTab'
 
 export type Role = 'STUDENT' | 'TUTOR' | 'COMPANY' | 'COORDINATOR'
 
@@ -44,6 +45,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => readStoredUser())
   const navigate = useNavigate()
 
+  const performCleanup = useCallback(async () => {
+    await db.delete()
+    await db.open()
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    localStorage.removeItem('user')
+    setUser(null)
+  }, [])
+
+  useEffect(() => {
+    const channel = getCrossTabChannel()
+    const unsubscribe = channel.onMessage((msg) => {
+      if (msg.type === 'LOGOUT') {
+        performCleanup().then(() => {
+          navigate('/login')
+        })
+      }
+    })
+    return unsubscribe
+  }, [performCleanup, navigate])
+
   async function login(email: string, password: string) {
     const { accessToken, user: loggedUser } = await api<LoginResponse>('/auth/login', {
       method: 'POST',
@@ -58,11 +80,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // si no se borra Dexie, el checkpoint de sync y los datos del estudiante
   // anterior sobreviven a esta sesión y contaminan la del siguiente.
   async function logout() {
-    await db.delete()
-    await db.open()
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('user')
-    setUser(null)
+    await performCleanup()
+    getCrossTabChannel().postMessage('LOGOUT')
     navigate('/login')
   }
 
