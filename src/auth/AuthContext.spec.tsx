@@ -165,7 +165,7 @@ describe('AuthProvider', () => {
       await result.current.login('empresa0@miyura.com', 'yura1234')
     })
 
-    const { getCrossTabChannel, CrossTabChannel } = await import('@/offline/sync/crossTab')
+    const { CrossTabChannel } = await import('@/offline/sync/crossTab')
     
     
     await act(async () => {
