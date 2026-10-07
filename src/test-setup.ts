@@ -5,6 +5,8 @@ if (typeof window !== 'undefined' && !window.BroadcastChannel && typeof globalTh
   window.BroadcastChannel = globalThis.BroadcastChannel
 }
 
+// Polyfill en memoria para localStorage en el entorno de pruebas Node.js (Vitest)
+// cuando las advertencias experimentales de Node deshabilitan la API global en el runner.
 if (typeof globalThis.localStorage === 'undefined' || !globalThis.localStorage || typeof globalThis.localStorage.setItem !== 'function') {
   const store = new Map<string, string>()
   const mockStorage = {
@@ -21,4 +23,3 @@ if (typeof globalThis.localStorage === 'undefined' || !globalThis.localStorage |
     writable: true,
   })
 }
-

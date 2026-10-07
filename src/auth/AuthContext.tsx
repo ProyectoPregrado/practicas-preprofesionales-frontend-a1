@@ -1,6 +1,7 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, onUnauthorized } from '@/api/client'
+import { SESSION_EXPIRED_MESSAGE } from '@/auth/auth.constants'
 import { db } from '@/offline/db'
 import { getCrossTabChannel } from '@/offline/sync/crossTab'
 
@@ -44,6 +45,14 @@ function readStoredUser(): AuthUser | null {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => readStoredUser())
   const navigate = useNavigate()
+  const isHandling401Ref = useRef(false)
+
+  const clearSessionOnly = useCallback(() => {
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    localStorage.removeItem('user')
+    setUser(null)
+  }, [])
 
   const performCleanup = useCallback(async () => {
     await db.delete()
@@ -51,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     localStorage.removeItem('user')
+    localStorage.removeItem('last_user_id')
     setUser(null)
   }, [])
 
@@ -58,41 +68,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const channel = getCrossTabChannel()
     const unsubscribe = channel.onMessage((msg) => {
       if (msg.type === 'LOGOUT') {
-        performCleanup().then(() => {
-          navigate('/login')
-        })
+        clearSessionOnly()
+        navigate('/login')
       }
     })
     return unsubscribe
-  }, [performCleanup, navigate])
+  }, [clearSessionOnly, navigate])
 
   useEffect(() => {
     const unsubUnauthorized = onUnauthorized(() => {
-      performCleanup().then(() => {
-        navigate('/login', {
-          state: {
-            expired: true,
-            message: 'Tu sesión ha expirado. Por favor volvé a iniciar sesión.',
-          },
-        })
-      })
+      if (isHandling401Ref.current) return
+      isHandling401Ref.current = true
+
+      sessionStorage.setItem('session_expired', 'true')
+      clearSessionOnly()
+      getCrossTabChannel().postMessage('LOGOUT')
+      navigate('/login')
     })
     return unsubUnauthorized
-  }, [performCleanup, navigate])
+  }, [clearSessionOnly, navigate])
 
   async function login(email: string, password: string) {
     const { accessToken, user: loggedUser } = await api<LoginResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     })
+
+    const lastUserId = localStorage.getItem('last_user_id')
+    if (lastUserId && Number(lastUserId) !== loggedUser.id) {
+      // Si un usuario diferente inicia sesión en una máquina compartida,
+      // limpiamos Dexie para evitar contaminar su sesión (caso C-2).
+      await db.delete()
+      await db.open()
+    }
+
+    localStorage.setItem('last_user_id', String(loggedUser.id))
     localStorage.setItem('access_token', accessToken)
     localStorage.setItem('user', JSON.stringify(loggedUser))
     setUser(loggedUser)
   }
 
   // Una máquina de laboratorio compartida es el caso normal de este dominio:
-  // si no se borra Dexie, el checkpoint de sync y los datos del estudiante
-  // anterior sobreviven a esta sesión y contaminan la del siguiente.
+  // si no se borra Dexie en un logout explícito, el checkpoint de sync y los
+  // datos del estudiante anterior sobreviven a esta sesión y contaminan la del siguiente.
   async function logout() {
     await performCleanup()
     getCrossTabChannel().postMessage('LOGOUT')

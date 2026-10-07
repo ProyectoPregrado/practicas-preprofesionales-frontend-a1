@@ -17,7 +17,8 @@ describe('api', () => {
 
   it('throws ApiError carrying the backend message', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false, status: 403,
+      ok: false,
+      status: 403,
       json: async () => ({ statusCode: 403, message: 'rol insuficiente' }),
     }))
 
@@ -30,7 +31,8 @@ describe('api', () => {
     const unsubscribe = onUnauthorized(listener)
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false, status: 401,
+      ok: false,
+      status: 401,
       json: async () => ({ statusCode: 401, message: 'jwt expired' }),
     }))
 
@@ -39,5 +41,39 @@ describe('api', () => {
 
     unsubscribe()
   })
-})
 
+  it('does NOT notify onUnauthorized listener when 401 comes from /auth/login', async () => {
+    const listener = vi.fn()
+    const unsubscribe = onUnauthorized(listener)
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ statusCode: 401, message: 'credenciales inválidas' }),
+    }))
+
+    await expect(api('/auth/login', { method: 'POST' })).rejects.toBeInstanceOf(ApiError)
+    expect(listener).not.toHaveBeenCalled()
+
+    unsubscribe()
+  })
+
+  it('handles concurrent 401 requests via Promise.all and notifies listener for each call', async () => {
+    const listener = vi.fn()
+    const unsubscribe = onUnauthorized(listener)
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ statusCode: 401, message: 'jwt expired' }),
+    }))
+
+    await expect(
+      Promise.all([api('/offers'), api('/placements'), api('/profile')])
+    ).rejects.toBeInstanceOf(ApiError)
+
+    expect(listener.mock.calls.length).toBeGreaterThanOrEqual(1)
+
+    unsubscribe()
+  })
+})
