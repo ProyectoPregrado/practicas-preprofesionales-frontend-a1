@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { ApiError } from '@/api/client'
 import { useAuth } from '@/auth/AuthContext'
 import { Button } from '@/components/ui/button'
@@ -9,6 +9,10 @@ import { Label } from '@/components/ui/label'
 export function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
+  const locationState = location.state as { expired?: boolean; message?: string } | null
+  const sessionExpiredMessage = locationState?.message ?? (locationState?.expired ? 'Tu sesión ha expirado. Por favor volvé a iniciar sesión.' : null)
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -26,6 +30,21 @@ export function LoginPage() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  let alertContent = null
+  if (error) {
+    alertContent = (
+      <p role="alert" className="rounded-md bg-chipVoid px-3 py-2.5 text-13 text-void">
+        {error}
+      </p>
+    )
+  } else if (sessionExpiredMessage) {
+    alertContent = (
+      <p role="alert" className="rounded-md bg-chipVoid px-3 py-2.5 text-13 text-void">
+        {sessionExpiredMessage}
+      </p>
+    )
   }
 
   return (
@@ -71,11 +90,7 @@ export function LoginPage() {
                 onChange={(event) => setPassword(event.target.value)}
               />
             </div>
-            {error ? (
-              <p role="alert" className="rounded-md bg-chipVoid px-3 py-2.5 text-13 text-void">
-                {error}
-              </p>
-            ) : null}
+            {alertContent}
             <Button type="submit" size="lg" disabled={submitting}>
               {submitting ? 'Entrando…' : 'Entrar'}
             </Button>

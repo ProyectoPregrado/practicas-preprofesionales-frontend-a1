@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '@/api/client'
+import { api, onUnauthorized } from '@/api/client'
 import { db } from '@/offline/db'
 import { getCrossTabChannel } from '@/offline/sync/crossTab'
 
@@ -64,6 +64,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     })
     return unsubscribe
+  }, [performCleanup, navigate])
+
+  useEffect(() => {
+    const unsubUnauthorized = onUnauthorized(() => {
+      performCleanup().then(() => {
+        navigate('/login', {
+          state: {
+            expired: true,
+            message: 'Tu sesión ha expirado. Por favor volvé a iniciar sesión.',
+          },
+        })
+      })
+    })
+    return unsubUnauthorized
   }, [performCleanup, navigate])
 
   async function login(email: string, password: string) {

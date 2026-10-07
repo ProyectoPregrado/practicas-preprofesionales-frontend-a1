@@ -178,4 +178,38 @@ describe('AuthProvider', () => {
       expect(result.current.user).toBeNull()
     })
   })
+
+  it('clears storage and user state when 401 unauthorized occurs', async () => {
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-123',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+    expect(result.current.user).not.toBeNull()
+
+    const actualClient = await vi.importActual<typeof import('@/api/client')>('@/api/client')
+    
+    // Simulate 401 response from api call
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: async () => ({ statusCode: 401, message: 'jwt expired' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await act(async () => {
+      try {
+        await actualClient.api('/offers')
+      } catch {
+        // Expected 401 ApiError
+      }
+    })
+
+    await vi.waitFor(() => {
+      expect(result.current.user).toBeNull()
+    })
+  })
 })

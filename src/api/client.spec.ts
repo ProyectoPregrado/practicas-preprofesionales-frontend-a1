@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, api } from './client'
+import { ApiError, api, onUnauthorized } from './client'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -24,4 +24,20 @@ describe('api', () => {
     await expect(api('/offers')).rejects.toMatchObject({ statusCode: 403, message: 'rol insuficiente' })
     await expect(api('/offers')).rejects.toBeInstanceOf(ApiError)
   })
+
+  it('notifies onUnauthorized listener when response status is 401', async () => {
+    const listener = vi.fn()
+    const unsubscribe = onUnauthorized(listener)
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 401,
+      json: async () => ({ statusCode: 401, message: 'jwt expired' }),
+    }))
+
+    await expect(api('/offers')).rejects.toBeInstanceOf(ApiError)
+    expect(listener).toHaveBeenCalledTimes(1)
+
+    unsubscribe()
+  })
 })
+
