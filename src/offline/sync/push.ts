@@ -1,4 +1,4 @@
-import { api } from '@/api/client'
+import { api, ApiError } from '@/api/client'
 import { db, type OutboxEntry } from '@/offline/db'
 import { applyResults, type SyncOperationResult } from './conflict'
 import { setStatus } from './status'
@@ -147,6 +147,9 @@ export async function pushOutbox(
       failed: summary.failed + purgedCount,
     }
   } catch (err) {
+    if (err instanceof ApiError && err.statusCode === 401) {
+      throw err
+    }
     return handlePushError(toSend, err, maxAttempts)
   }
 }
