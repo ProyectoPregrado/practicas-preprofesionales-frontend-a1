@@ -1,3 +1,4 @@
+/* eslint-disable sonarjs/no-hardcoded-passwords */
 import type { ReactNode } from 'react'
 import { act, renderHook } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -148,7 +149,7 @@ describe('AuthProvider', () => {
       await result.current.logout()
     })
 
-    expect(postMessageSpy).toHaveBeenCalledWith('LOGOUT')
+    expect(postMessageSpy).toHaveBeenCalledWith('LOGOUT', { reason: 'USER_LOGOUT' })
   })
 
   it('logs out automatically when receiving LOGOUT message from crossTabChannel', async () => {
@@ -171,6 +172,30 @@ describe('AuthProvider', () => {
 
     await act(async () => {
       expect(result.current.user).toBeNull()
+    })
+  })
+
+  it('sets session_expired flag in sessionStorage when receiving LOGOUT with reason EXPIRED from crossTabChannel', async () => {
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-123',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+
+    const { CrossTabChannel } = await import('@/offline/sync/crossTab')
+    
+    await act(async () => {
+      const otherTabChannel = new CrossTabChannel('offline_sync_channel', 'other-tab')
+      otherTabChannel.postMessage('LOGOUT', { reason: 'EXPIRED' })
+      otherTabChannel.close()
+    })
+
+    await act(async () => {
+      expect(result.current.user).toBeNull()
+      expect(sessionStorage.getItem('session_expired')).toBe('true')
     })
   })
 
