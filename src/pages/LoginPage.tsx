@@ -6,17 +6,27 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
+export const SESSION_EXPIRED_MESSAGE = 'Tu sesión ha expirado. Iniciá sesión nuevamente.'
+
 export function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(() => {
+    if (sessionStorage.getItem('session_expired') === 'true') {
+      sessionStorage.removeItem('session_expired')
+      return SESSION_EXPIRED_MESSAGE
+    }
+    return null
+  })
   const [submitting, setSubmitting] = useState(false)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
+    setSessionExpiredMessage(null)
     setSubmitting(true)
     try {
       await login(email, password)
@@ -74,6 +84,11 @@ export function LoginPage() {
             {error ? (
               <p role="alert" className="rounded-md bg-chipVoid px-3 py-2.5 text-13 text-void">
                 {error}
+              </p>
+            ) : null}
+            {sessionExpiredMessage ? (
+              <p role="status" className="rounded-md bg-chipWarn px-3 py-2.5 text-13 text-warnDark">
+                {sessionExpiredMessage}
               </p>
             ) : null}
             <Button type="submit" size="lg" disabled={submitting}>
