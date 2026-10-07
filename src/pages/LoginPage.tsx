@@ -1,7 +1,8 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '@/api/client'
 import { useAuth } from '@/auth/AuthContext'
+import { SESSION_EXPIRED_MESSAGE } from '@/auth/auth.constants'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -9,6 +10,16 @@ import { Label } from '@/components/ui/label'
 export function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
+  
+  const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (sessionStorage.getItem('session_expired') === 'true') {
+      setSessionExpiredMessage(SESSION_EXPIRED_MESSAGE)
+      sessionStorage.removeItem('session_expired')
+    }
+  }, [])
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -26,6 +37,21 @@ export function LoginPage() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  let alertContent = null
+  if (error) {
+    alertContent = (
+      <p role="alert" className="rounded-md bg-chipVoid px-3 py-2.5 text-13 text-void">
+        {error}
+      </p>
+    )
+  } else if (sessionExpiredMessage) {
+    alertContent = (
+      <p role="alert" className="rounded-md bg-chipVoid px-3 py-2.5 text-13 text-void">
+        {sessionExpiredMessage}
+      </p>
+    )
   }
 
   return (
@@ -71,11 +97,7 @@ export function LoginPage() {
                 onChange={(event) => setPassword(event.target.value)}
               />
             </div>
-            {error ? (
-              <p role="alert" className="rounded-md bg-chipVoid px-3 py-2.5 text-13 text-void">
-                {error}
-              </p>
-            ) : null}
+            {alertContent}
             <Button type="submit" size="lg" disabled={submitting}>
               {submitting ? 'Entrando…' : 'Entrar'}
             </Button>
