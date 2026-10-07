@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { act, renderHook } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, onUnauthorized } from '@/api/client'
+import { api } from '@/api/client'
 import { db } from '@/offline/db'
 import { AuthProvider, useAuth } from './AuthContext'
 
@@ -178,9 +178,11 @@ describe('AuthProvider', () => {
     // Inserta 10 horas encoladas en outbox (trabajo offline pendiente)
     for (let i = 1; i <= 10; i++) {
       await db.outbox.put({
-        id: `op-${i}`,
         clientOpId: `op-${i}`,
-        type: 'CREATE_HOUR_LOG',
+        entity: 'hourLog',
+        op: 'create',
+        baseVersion: null,
+        lastError: null,
         payload: { placementId: 1, date: '2026-01-01', hours: 2, activity: 'Offline work' },
         createdAt: new Date().toISOString(),
         attempts: 0,
@@ -199,7 +201,6 @@ describe('AuthProvider', () => {
     expect(result.current.user).not.toBeNull()
 
     // Simula disparo de expiración 401
-    const listeners = (onUnauthorized as any).__listeners ?? []
     await act(async () => {
       // Invocar listeners de onUnauthorized registrados
       const actualClient = await vi.importActual<typeof import('@/api/client')>('@/api/client')
@@ -227,9 +228,11 @@ describe('AuthProvider', () => {
   it('wipes Dexie data if a DIFFERENT user logs in on a shared machine after 401', async () => {
     // Inserta datos del usuario 5
     await db.outbox.put({
-      id: 'op-user5',
       clientOpId: 'op-user5',
-      type: 'CREATE_HOUR_LOG',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
       payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Student 5 work' },
       createdAt: new Date().toISOString(),
       attempts: 0,
@@ -256,9 +259,11 @@ describe('AuthProvider', () => {
 
   it('preserves Dexie data if the SAME user logs back in after 401', async () => {
     await db.outbox.put({
-      id: 'op-sameuser',
       clientOpId: 'op-sameuser',
-      type: 'CREATE_HOUR_LOG',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
       payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Same student work' },
       createdAt: new Date().toISOString(),
       attempts: 0,

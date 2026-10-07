@@ -1,7 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, onUnauthorized } from '@/api/client'
-import { SESSION_EXPIRED_MESSAGE } from '@/auth/auth.constants'
 import { db } from '@/offline/db'
 import { getCrossTabChannel } from '@/offline/sync/crossTab'
 

@@ -1,5 +1,5 @@
 import { type FormEvent, useState, useEffect } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { ApiError } from '@/api/client'
 import { useAuth } from '@/auth/AuthContext'
 import { SESSION_EXPIRED_MESSAGE } from '@/auth/auth.constants'
@@ -10,7 +10,6 @@ import { Label } from '@/components/ui/label'
 export function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation()
   
   const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null)
 
