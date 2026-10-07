@@ -104,6 +104,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('last_user_id', String(loggedUser.id))
     localStorage.setItem('access_token', accessToken)
     localStorage.setItem('user', JSON.stringify(loggedUser))
+    // AuthProvider sigue montado al volver a /login: sin este reset, el segundo
+    // vencimiento de la misma pestaña se ignoraría.
+    isHandling401Ref.current = false
     setUser(loggedUser)
   }
 

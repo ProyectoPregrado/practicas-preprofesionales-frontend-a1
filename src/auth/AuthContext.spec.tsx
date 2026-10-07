@@ -286,4 +286,38 @@ describe('AuthProvider', () => {
     expect(await db.outbox.count()).toBe(1)
     expect(result.current.user?.id).toBe(5)
   })
+
+  it('handles a second 401 after logging in again without reloading the page', async () => {
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-1',
+      user: { id: 5, email: 'estudiante@miyura.com', fullName: 'Estudiante 5', role: 'STUDENT', companyId: null },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    const actualClient = await vi.importActual<typeof import('@/api/client')>('@/api/client')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 401, json: async () => ({ message: 'jwt expired' }) }),
+    )
+
+    try {
+      // Dos vencimientos seguidos en la misma carga de página: ambos deben cerrar la sesión.
+      for (let expiry = 1; expiry <= 2; expiry++) {
+        await act(async () => {
+          await result.current.login('estudiante@miyura.com', 'yura1234')
+        })
+        expect(localStorage.getItem('access_token')).toBe('tok-1')
+
+        await act(async () => {
+          await actualClient.api('/offers').catch(() => undefined)
+        })
+
+        await vi.waitFor(() => {
+          expect(localStorage.getItem('access_token')).toBeNull()
+          expect(result.current.user).toBeNull()
+        })
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })
