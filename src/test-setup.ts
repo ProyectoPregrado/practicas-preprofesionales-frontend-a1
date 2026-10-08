@@ -23,3 +23,20 @@ if (typeof globalThis.localStorage === 'undefined' || !globalThis.localStorage |
     writable: true,
   })
 }
+
+if (typeof globalThis.sessionStorage === 'undefined' || !globalThis.sessionStorage || typeof globalThis.sessionStorage.setItem !== 'function') {
+  const store = new Map<string, string>()
+  const mockStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => store.set(key, String(value)),
+    removeItem: (key: string) => store.delete(key),
+    clear: () => store.clear(),
+    key: (index: number) => Array.from(store.keys())[index] ?? null,
+    get length() { return store.size },
+  }
+  Object.defineProperty(globalThis, 'sessionStorage', {
+    value: mockStorage,
+    configurable: true,
+    writable: true,
+  })
+}

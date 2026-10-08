@@ -42,7 +42,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    if (res.status === 401 && !path.includes('/auth/login')) {
+    if (res.status === 401 && !path.startsWith('/auth/login')) {
       notifyUnauthorized()
     }
     throw new ApiError(res.status, body.message ?? `Error ${res.status}`)
