@@ -54,8 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const performCleanup = useCallback(async () => {
-    await db.delete()
-    await db.open()
+    await Promise.all(db.tables.map((table) => table.clear()))
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     localStorage.removeItem('user')
@@ -67,6 +66,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const channel = getCrossTabChannel()
     const unsubscribe = channel.onMessage((msg) => {
       if (msg.type === 'LOGOUT') {
+        const payload = msg.payload as { reason?: string } | undefined
+        if (payload?.reason === 'EXPIRED') {
+          sessionStorage.setItem('session_expired', 'true')
+        }
         clearSessionOnly()
         navigate('/login')
       }
@@ -81,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       sessionStorage.setItem('session_expired', 'true')
       clearSessionOnly()
-      getCrossTabChannel().postMessage('LOGOUT')
+      getCrossTabChannel().postMessage('LOGOUT', { reason: 'EXPIRED' })
       navigate('/login')
     })
     return unsubUnauthorized
@@ -97,8 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (lastUserId && Number(lastUserId) !== loggedUser.id) {
       // Si un usuario diferente inicia sesión en una máquina compartida,
       // limpiamos Dexie para evitar contaminar su sesión (caso C-2).
-      await db.delete()
-      await db.open()
+      await Promise.all(db.tables.map((table) => table.clear()))
     }
 
     localStorage.setItem('last_user_id', String(loggedUser.id))
@@ -114,8 +116,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // si no se borra Dexie en un logout explícito, el checkpoint de sync y los
   // datos del estudiante anterior sobreviven a esta sesión y contaminan la del siguiente.
   async function logout() {
+    isHandling401Ref.current = false
     await performCleanup()
-    getCrossTabChannel().postMessage('LOGOUT')
+    getCrossTabChannel().postMessage('LOGOUT', { reason: 'USER_LOGOUT' })
     navigate('/login')
   }
 

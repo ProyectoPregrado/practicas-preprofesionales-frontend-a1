@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { api } from '@/api/client'
+import { api, ApiError } from '@/api/client'
 import { db } from '@/offline/db'
 import { enqueue, pushOutbox } from './push'
 
-vi.mock('@/api/client', () => ({ api: vi.fn() }))
+vi.mock('@/api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/client')>()
+  return { ...actual, api: vi.fn() }
+})
 
 const mockedApi = vi.mocked(api)
 
@@ -312,5 +315,40 @@ describe('pushOutbox', () => {
       syncState: 'failed',
       reviewNote: expect.stringContaining('Fallo previo'),
     })
+  })
+
+  it('no incrementa intentos ni purga el outbox si el push falla por 401 (sesión expirada)', async () => {
+    await db.hourLogs.put({
+      id: 200,
+      placementId: 1,
+      date: '2026-04-01',
+      startTime: '08:00',
+      endTime: '12:00',
+      hours: 4,
+      activity: 'Horas pendientes',
+      status: 'SUBMITTED',
+      version: 1,
+      updatedAt: '2026-04-01T00:00:00.000Z',
+      syncState: 'local',
+    })
+    await enqueue({
+      entity: 'hourLog',
+      op: 'create',
+      payload: { id: 200, hours: 4 },
+      baseVersion: null,
+    })
+
+    mockedApi.mockRejectedValue(new ApiError(401, 'jwt expired'))
+
+    await expect(pushOutbox({ maxAttempts: 3 })).rejects.toThrow('jwt expired')
+
+    // El outbox no debe haberse purgado ni incrementado attempts
+    const [entry] = await db.outbox.toArray()
+    expect(entry.attempts).toBe(0)
+    expect(entry.lastError).toBeNull()
+
+    // La hora local sigue en estado 'queued' para sincronizar cuando se renueve la sesión
+    const localLog = await db.hourLogs.get(200)
+    expect(localLog?.syncState).toBe('queued')
   })
 })
