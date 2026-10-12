@@ -62,6 +62,7 @@ describe('AuthProvider', () => {
   it('login stores the token and user, and updates the context', async () => {
     vi.mocked(api).mockResolvedValue({
       accessToken: 'tok-123',
+      refreshToken: 'ref-123',
       user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
     })
     const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
@@ -75,6 +76,7 @@ describe('AuthProvider', () => {
       body: JSON.stringify({ email: 'empresa0@miyura.com', password: 'yura1234' }),
     })
     expect(localStorage.getItem('access_token')).toBe('tok-123')
+    expect(localStorage.getItem('refresh_token')).toBe('ref-123')
     expect(result.current.user?.companyId).toBe(1)
     expect(result.current.role).toBe('COMPANY')
   })
