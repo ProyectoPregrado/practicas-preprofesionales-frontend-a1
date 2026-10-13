@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { db } from '@/offline/db'
-import { AuthProvider, useAuth } from './AuthContext'
+import { AuthProvider, useAuth, UnsyncedHoursWarningError } from './AuthContext'
 
 vi.mock('@/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/client')>()
@@ -24,10 +24,16 @@ function withProvider({ children }: { children: ReactNode }) {
   )
 }
 
-beforeEach(() => localStorage.clear())
-afterEach(() => {
+beforeEach(async () => {
+  localStorage.clear()
+  sessionStorage.clear()
+  await Promise.all(db.tables.map((t) => t.clear()))
+})
+afterEach(async () => {
   vi.clearAllMocks()
   localStorage.clear()
+  sessionStorage.clear()
+  await Promise.all(db.tables.map((t) => t.clear()))
 })
 
 describe('useAuth', () => {
@@ -250,7 +256,7 @@ describe('AuthProvider', () => {
     expect(await db.outbox.count()).toBe(10)
   })
 
-  it('wipes Dexie data if a DIFFERENT user logs in on a shared machine after 401', async () => {
+  it('throws UnsyncedHoursWarningError and preserves outbox if a DIFFERENT user logs in on a shared machine with pending hours', async () => {
     // Inserta datos del usuario 5
     await db.outbox.put({
       clientOpId: 'op-user5',
@@ -272,13 +278,75 @@ describe('AuthProvider', () => {
     })
     const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
 
-    // Usuario 99 inicia sesión (usuario distinto al 5)
+    // Usuario 99 intenta iniciar sesión sin forceDiscard
+    await expect(
+      act(async () => {
+        await result.current.login('otro@miyura.com', 'pass1234')
+      }),
+    ).rejects.toBeInstanceOf(UnsyncedHoursWarningError)
+
+    // Las horas del usuario anterior siguen intactas
+    expect(await db.outbox.count()).toBe(1)
+    expect(localStorage.getItem('last_user_id')).toBe('5')
+  })
+
+  it('wipes Dexie data in a single transaction if a DIFFERENT user logs in with forceDiscard: true', async () => {
+    await db.outbox.put({
+      clientOpId: 'op-user5',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
+      payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Student 5 work' },
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+    })
+    localStorage.setItem('last_user_id', '5')
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-999',
+      user: { id: 99, email: 'otro@miyura.com', fullName: 'Usuario 99', role: 'STUDENT', companyId: null },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+
+    // Usuario 99 confirma descartar
+    await act(async () => {
+      await result.current.login('otro@miyura.com', 'pass1234', { forceDiscard: true })
+    })
+
+    // Dexie debe haber sido limpiado en una sola transacción
+    expect(await db.outbox.count()).toBe(0)
+    expect(localStorage.getItem('last_user_id')).toBe('99')
+  })
+
+  it('wipes Dexie data without warning if a DIFFERENT user logs in and there are no pending hours', async () => {
+    // Usuario 5 dejó tablas con datos pero SIN horas en outbox
+    await db.placements.put({
+      id: 1,
+      studentId: 5,
+      tutorId: 1,
+      companyId: 1,
+      startDate: '2026-01-01',
+      endDate: '2026-06-01',
+      requiredHours: 200,
+      status: 'ACTIVE',
+      version: 1,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+    expect(await db.outbox.count()).toBe(0)
+    localStorage.setItem('last_user_id', '5')
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-999',
+      user: { id: 99, email: 'otro@miyura.com', fullName: 'Usuario 99', role: 'STUDENT', companyId: null },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+
     await act(async () => {
       await result.current.login('otro@miyura.com', 'pass1234')
     })
 
-    // Dexie debe haber sido limpiado para proteger el aislamiento (caso C-2)
-    expect(await db.outbox.count()).toBe(0)
+    expect(await db.placements.count()).toBe(0)
     expect(localStorage.getItem('last_user_id')).toBe('99')
   })
 

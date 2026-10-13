@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, onUnauthorized } from '@/api/client'
 import { db } from '@/offline/db'
 import { getCrossTabChannel } from '@/offline/sync/crossTab'
+import { stopSync } from '@/offline/sync/scheduler'
 
 export type Role = 'STUDENT' | 'TUTOR' | 'COMPANY' | 'COORDINATOR'
 
@@ -17,6 +18,21 @@ export interface AuthUser {
   companyId: number | null
 }
 
+export class UnsyncedHoursWarningError extends Error {
+  constructor(readonly pendingCount: number) {
+    super(
+      `Hay ${pendingCount} ${
+        pendingCount === 1 ? 'registro de hora' : 'registros de horas'
+      } pendiente${pendingCount === 1 ? '' : 's'} de sincronizar del usuario anterior.`,
+    )
+    this.name = 'UnsyncedHoursWarningError'
+  }
+}
+
+export interface LoginOptions {
+  forceDiscard?: boolean
+}
+
 interface LoginResponse {
   accessToken: string
   user: AuthUser
@@ -25,7 +41,7 @@ interface LoginResponse {
 interface AuthContextValue {
   user: AuthUser | null
   role: Role | null
-  login: (email: string, password: string) => Promise<void>
+  login: (email: string, password: string, options?: LoginOptions) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -47,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isHandling401Ref = useRef(false)
 
   const clearSessionOnly = useCallback(() => {
+    stopSync()
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     localStorage.removeItem('user')
@@ -54,7 +71,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const performCleanup = useCallback(async () => {
-    await Promise.all(db.tables.map((table) => table.clear()))
+    stopSync()
+    await db.transaction('rw', db.tables, async () => {
+      await Promise.all(db.tables.map((table) => table.clear()))
+    })
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     localStorage.removeItem('user')
@@ -90,7 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return unsubUnauthorized
   }, [clearSessionOnly, navigate])
 
-  async function login(email: string, password: string) {
+  async function login(email: string, password: string, options?: LoginOptions) {
     const { accessToken, user: loggedUser } = await api<LoginResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
@@ -98,9 +118,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const lastUserId = localStorage.getItem('last_user_id')
     if (lastUserId && Number(lastUserId) !== loggedUser.id) {
-      // Si un usuario diferente inicia sesión en una máquina compartida,
-      // limpiamos Dexie para evitar contaminar su sesión (caso C-2).
-      await Promise.all(db.tables.map((table) => table.clear()))
+      // S-1: Si hay horas sin sincronizar del usuario anterior en una máquina compartida,
+      // avisar y requerir confirmación explícita (forceDiscard) antes de borrarlas.
+      const pendingCount = await db.outbox.count()
+      if (pendingCount > 0 && !options?.forceDiscard) {
+        throw new UnsyncedHoursWarningError(pendingCount)
+      }
+
+      // T-3: Limpiar Dexie en una sola transacción atómica
+      await db.transaction('rw', db.tables, async () => {
+        await Promise.all(db.tables.map((table) => table.clear()))
+      })
     }
 
     localStorage.setItem('last_user_id', String(loggedUser.id))
