@@ -121,6 +121,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // datos del estudiante anterior sobreviven a esta sesión y contaminan la del siguiente.
   async function logout() {
     isHandling401Ref.current = false
+    const refreshToken = localStorage.getItem('refresh_token')
+    if (refreshToken) {
+      try {
+        await api('/auth/logout', {
+          method: 'POST',
+          body: JSON.stringify({ refreshToken }),
+        })
+      } catch {
+        // En caso de fallo de red o del servidor, se continúa con la limpieza
+        // local para garantizar que los datos del usuario se purguen siempre.
+      }
+    }
     await performCleanup()
     getCrossTabChannel().postMessage('LOGOUT', { reason: 'USER_LOGOUT' })
     navigate('/login')
