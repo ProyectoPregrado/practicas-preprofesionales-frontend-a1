@@ -71,7 +71,15 @@ export function OfferApplicationsPage() {
   function refetchApplications() {
     return listApplicationsForOffer(offerId)
       .then((data) => setApplications(data))
-      .catch((err) => setLoadError(err instanceof ApiError ? err.message : 'No se pudieron cargar las postulaciones'))
+      .catch((err) => {
+        if (err instanceof ApiError && err.statusCode === 403) {
+          setLoadError('No tienes permiso para ver las postulaciones de esta oferta porque no pertenece a tu empresa.')
+        } else if (err instanceof ApiError && err.statusCode === 404) {
+          setLoadError('Esta oferta no existe o no está disponible.')
+        } else {
+          setLoadError(err instanceof ApiError ? err.message : 'No se pudieron cargar las postulaciones')
+        }
+      })
   }
 
   useEffect(() => {
@@ -83,7 +91,13 @@ export function OfferApplicationsPage() {
       .catch((err) => {
         if (!cancelled) {
           setOffer(null)
-          setLoadError(err instanceof ApiError ? err.message : 'No se pudo cargar la oferta')
+          if (err instanceof ApiError && err.statusCode === 403) {
+            setLoadError('No tienes permiso para ver las postulaciones de esta oferta porque no pertenece a tu empresa.')
+          } else if (err instanceof ApiError && err.statusCode === 404) {
+            setLoadError('Esta oferta no existe o no está disponible.')
+          } else {
+            setLoadError(err instanceof ApiError ? err.message : 'No se pudo cargar la oferta')
+          }
         }
       })
     listApplicationsForOffer(offerId)
@@ -92,7 +106,13 @@ export function OfferApplicationsPage() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setLoadError(err instanceof ApiError ? err.message : 'No se pudieron cargar las postulaciones')
+          if (err instanceof ApiError && err.statusCode === 403) {
+            setLoadError('No tienes permiso para ver las postulaciones de esta oferta porque no pertenece a tu empresa.')
+          } else if (err instanceof ApiError && err.statusCode === 404) {
+            setLoadError('Esta oferta no existe o no está disponible.')
+          } else {
+            setLoadError(err instanceof ApiError ? err.message : 'No se pudieron cargar las postulaciones')
+          }
         }
       })
     return () => {
@@ -107,7 +127,11 @@ export function OfferApplicationsPage() {
       await decideApplication(applicationId, status)
       await refetchApplications()
     } catch (err) {
-      setDecisionError(err instanceof ApiError ? err.message : 'No se pudo enviar la decisión')
+      if (err instanceof ApiError && err.statusCode === 403) {
+        setDecisionError('No puedes decidir postulaciones de ofertas que pertenecen a otra empresa.')
+      } else {
+        setDecisionError(err instanceof ApiError ? err.message : 'No se pudo enviar la decisión')
+      }
     } finally {
       setDecisionState((prev) => ({ ...prev, [applicationId]: null }))
     }
@@ -118,9 +142,15 @@ export function OfferApplicationsPage() {
       <>
         <BackLink />
         <Panel>
-          <p role="alert" className="px-5 py-14 text-center text-14 text-void">
-            {loadError}
-          </p>
+          <EmptyState
+            title="Acceso restringido o no disponible"
+            description={loadError}
+            action={
+              <Button asChild size="sm">
+                <Link to="/ofertas-empresa">Volver a mis ofertas</Link>
+              </Button>
+            }
+          />
         </Panel>
       </>
     )

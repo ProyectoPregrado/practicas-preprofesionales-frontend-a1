@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '@/api/client'
 import { submitEvaluation } from '@/api/evaluations'
+import { useAuth } from '@/auth/AuthContext'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, LoadingState, Panel, Section } from '@/components/Panel'
 import { Button } from '@/components/ui/button'
@@ -40,6 +41,7 @@ function periodFromStartDate(startDate: string): string {
 export function EvaluatePage() {
   const { id } = useParams<{ id: string }>()
   const placementId = Number(id)
+  const { user } = useAuth()
 
   const placement = useLiveQuery<LocalPlacement | null | undefined>(async () => {
     const found = await db.placements.get(placementId)
@@ -62,7 +64,31 @@ export function EvaluatePage() {
   }
 
   if (placement === null) {
-    return <EmptyState title="No se encontró este practicante" />
+    return (
+      <EmptyState
+        title="No se encontró este practicante"
+        description="El practicante no existe o no está registrado en tu lista."
+        action={
+          <Button asChild size="sm">
+            <Link to="/practicantes">Volver a la lista</Link>
+          </Button>
+        }
+      />
+    )
+  }
+
+  if (user?.role === 'TUTOR' && placement.tutorId !== user.id) {
+    return (
+      <EmptyState
+        title="Práctica no asignada"
+        description="Esta práctica está asignada a otro tutor. No tienes permisos para evaluarla."
+        action={
+          <Button asChild size="sm">
+            <Link to="/practicantes">Volver a la lista</Link>
+          </Button>
+        }
+      />
+    )
   }
 
   const period = periodFromStartDate(placement.startDate)
@@ -93,7 +119,13 @@ export function EvaluatePage() {
       })
       setSubmitted(true)
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : 'No se pudo enviar la evaluación')
+      const msg =
+        err instanceof ApiError && err.statusCode === 403
+          ? 'No tienes permiso para evaluar esta práctica porque no eres el tutor asignado.'
+          : err instanceof ApiError
+            ? err.message
+            : 'No se pudo enviar la evaluación'
+      setSubmitError(msg)
     } finally {
       setSubmitting(false)
     }

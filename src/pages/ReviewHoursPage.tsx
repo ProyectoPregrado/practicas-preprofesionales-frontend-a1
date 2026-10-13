@@ -2,6 +2,7 @@ import { type FormEvent, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError, api } from '@/api/client'
+import { useAuth } from '@/auth/AuthContext'
 import { HoursProgressPanel } from '@/components/HoursProgressPanel'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, LoadingState, Panel } from '@/components/Panel'
@@ -249,6 +250,7 @@ function pendingNote(pendingCount: number) {
 export function ReviewHoursPage() {
   const { id } = useParams<{ id: string }>()
   const placementId = Number(id)
+  const { user } = useAuth()
 
   const placement = useLiveQuery<LocalPlacement | null | undefined>(async () => {
     const found = await db.placements.get(placementId)
@@ -275,7 +277,13 @@ export function ReviewHoursPage() {
       await syncNow()
       setActionState((prev) => ({ ...prev, [logId]: status === 'APPROVED' ? 'approved' : 'rejected' }))
     } catch (err) {
-      setReviewError(err instanceof ApiError ? err.message : 'No se pudo enviar la revisión')
+      const msg =
+        err instanceof ApiError && err.statusCode === 403
+          ? 'No tienes permiso para revisar este registro porque no eres el tutor asignado a esta práctica.'
+          : err instanceof ApiError
+            ? err.message
+            : 'No se pudo enviar la revisión'
+      setReviewError(msg)
       setActionState((prev) => ({ ...prev, [logId]: null }))
     }
   }
@@ -290,7 +298,31 @@ export function ReviewHoursPage() {
   }
 
   if (placement === null) {
-    return <EmptyState title="No se encontró este practicante" />
+    return (
+      <EmptyState
+        title="No se encontró este practicante"
+        description="El practicante no existe o no está registrado en tu lista."
+        action={
+          <Button asChild size="sm">
+            <Link to="/practicantes">Volver a la lista</Link>
+          </Button>
+        }
+      />
+    )
+  }
+
+  if (user?.role === 'TUTOR' && placement.tutorId !== user.id) {
+    return (
+      <EmptyState
+        title="Práctica no asignada"
+        description="Esta práctica está asignada a otro tutor. No tienes permisos para revisar sus horas."
+        action={
+          <Button asChild size="sm">
+            <Link to="/practicantes">Volver a la lista</Link>
+          </Button>
+        }
+      />
+    )
   }
 
   const hours = summarizeHours(logs, placement.requiredHours)
