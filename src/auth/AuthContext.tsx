@@ -80,12 +80,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const performCleanup = useCallback(async (options?: LoginOptions) => {
-    stopSync()
     await db.transaction('rw', db.tables, async () => {
       const pendingCount = await db.outbox.count()
       if (pendingCount > 0 && !options?.forceDiscard) {
+        // Cancelar el aviso deja la sesión abierta: el sync se detiene solo si el cierre procede.
         throw new UnsyncedHoursWarningError(pendingCount)
       }
+      stopSync()
       await Promise.all(db.tables.map((table) => table.clear()))
     })
     localStorage.removeItem('access_token')

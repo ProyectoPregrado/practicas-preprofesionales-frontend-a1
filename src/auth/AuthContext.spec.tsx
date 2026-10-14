@@ -5,7 +5,13 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { db } from '@/offline/db'
+import * as scheduler from '@/offline/sync/scheduler'
 import { AuthProvider, useAuth, UnsyncedHoursWarningError } from './AuthContext'
+
+vi.mock('@/offline/sync/scheduler', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/offline/sync/scheduler')>()
+  return { ...actual, stopSync: vi.fn(actual.stopSync), startSync: vi.fn(actual.startSync) }
+})
 
 vi.mock('@/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/client')>()
@@ -492,6 +498,35 @@ describe('AuthProvider', () => {
     // Las horas se preservan y la sesión continúa intacta
     expect(await db.outbox.count()).toBe(1)
     expect(result.current.user).not.toBeNull()
+  })
+
+  it('si el logout se cancela por horas pendientes, el sync no se detiene', async () => {
+    await db.outbox.put({
+      clientOpId: 'op-logout-cancel-sync',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
+      payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Work' },
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+    })
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-123',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+    vi.mocked(scheduler.stopSync).mockClear()
+
+    await act(async () => {
+      await expect(result.current.logout()).rejects.toThrow(UnsyncedHoursWarningError)
+    })
+
+    // Cancelar el aviso deja la sesión abierta: el sync debe seguir corriendo.
+    expect(scheduler.stopSync).not.toHaveBeenCalled()
   })
 
   it('logout con forceDiscard: true purga Dexie, revoca el refreshToken y completa el cierre de sesión', async () => {
