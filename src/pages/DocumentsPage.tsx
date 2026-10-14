@@ -166,7 +166,13 @@ export function DocumentsPage() {
       setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
     } catch (err) {
-      setUploadError(err instanceof ApiError ? err.message : 'No se pudo subir el documento')
+      const msg =
+        err instanceof ApiError && err.statusCode === 403
+          ? 'No tienes permiso para subir documentos a esta práctica.'
+          : err instanceof ApiError
+            ? err.message
+            : 'No se pudo subir el documento'
+      setUploadError(msg)
     } finally {
       setUploading(false)
     }

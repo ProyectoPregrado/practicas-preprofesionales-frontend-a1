@@ -5,7 +5,7 @@ import { ApiError } from '@/api/client'
 import { type Offer, getOffer } from '@/api/offers'
 import { Tag } from '@/components/Chip'
 import { PageHeader } from '@/components/PageHeader'
-import { LoadingState, Panel, Section } from '@/components/Panel'
+import { EmptyState, LoadingState, Panel, Section } from '@/components/Panel'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -53,11 +53,13 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 interface ApplicationSectionProps {
   /** `undefined` mientras se comprueba, `null` si todavía no postuló. */
   application: Application | null | undefined
+  /** Estado de la oferta actual (ej. 'PUBLISHED', 'CLOSED', 'DRAFT') */
+  offerStatus?: string
   /** Formulario de postulación, para cuando aún no hay una enviada. */
   form: React.ReactNode
 }
 
-function ApplicationSection({ application, form }: ApplicationSectionProps) {
+function ApplicationSection({ application, offerStatus, form }: ApplicationSectionProps) {
   if (application === undefined) {
     return (
       <Section title="Tu postulación">
@@ -75,6 +77,16 @@ function ApplicationSection({ application, form }: ApplicationSectionProps) {
             Enviada el {formatDate(application.submittedAt)}
           </span>
         </div>
+      </Section>
+    )
+  }
+
+  if (offerStatus === 'CLOSED') {
+    return (
+      <Section title="Postulaciones cerradas">
+        <p className="px-[18px] py-4 text-14 text-inkSoft">
+          Esta oferta ya se encuentra cerrada y no admite nuevas postulaciones.
+        </p>
       </Section>
     )
   }
@@ -109,7 +121,13 @@ export function OfferDetailPage() {
       .catch((err) => {
         if (!cancelled) {
           setOffer(null)
-          setLoadError(err instanceof ApiError ? err.message : 'No se pudo cargar la oferta')
+          if (err instanceof ApiError && err.statusCode === 404) {
+            setLoadError('Esta oferta no existe o ya no está disponible.')
+          } else if (err instanceof ApiError && err.statusCode === 403) {
+            setLoadError('No tienes permiso para acceder a esta oferta.')
+          } else {
+            setLoadError(err instanceof ApiError ? err.message : 'No se pudo cargar la oferta')
+          }
         }
       })
 
@@ -145,7 +163,11 @@ export function OfferDetailPage() {
       const created = await apply(offerId, trimmed)
       setExistingApplication(created)
     } catch (err) {
-      setSubmitError(err instanceof ApiError ? err.message : 'No se pudo enviar la postulación')
+      if (err instanceof ApiError && err.statusCode === 403) {
+        setSubmitError('No tienes permiso para postular a esta oferta.')
+      } else {
+        setSubmitError(err instanceof ApiError ? err.message : 'No se pudo enviar la postulación')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -156,9 +178,15 @@ export function OfferDetailPage() {
       <>
         <BackLink />
         <Panel>
-          <p role="alert" className="px-5 py-14 text-center text-14 text-void">
-            {loadError}
-          </p>
+          <EmptyState
+            title={loadError}
+            description="La oferta puede haber sido cerrada, encontrarse en borrador o el enlace es incorrecto."
+            action={
+              <Button asChild size="sm">
+                <Link to="/ofertas">Volver a ofertas</Link>
+              </Button>
+            }
+          />
         </Panel>
       </>
     )
@@ -180,7 +208,8 @@ export function OfferDetailPage() {
 
       <PageHeader title={offer.title} subtitle={offer.company.name} />
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <StatusBadge status={offer.status} />
         <Tag>{offer.modality}</Tag>
         <Tag>{plural(offer.seats, 'cupo', 'cupos')}</Tag>
         <Tag>{offer.requiredHours} h</Tag>
@@ -204,6 +233,7 @@ export function OfferDetailPage() {
 
       <ApplicationSection
         application={existingApplication}
+        offerStatus={offer.status}
         form={
           <form className="flex flex-col gap-4" onSubmit={handleSubmit} noValidate>
             <div className="flex flex-col gap-1.5">

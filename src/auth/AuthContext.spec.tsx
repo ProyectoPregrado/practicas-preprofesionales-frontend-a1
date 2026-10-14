@@ -5,11 +5,25 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { db } from '@/offline/db'
-import { AuthProvider, useAuth } from './AuthContext'
+import * as scheduler from '@/offline/sync/scheduler'
+import { AuthProvider, useAuth, UnsyncedHoursWarningError } from './AuthContext'
+
+vi.mock('@/offline/sync/scheduler', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/offline/sync/scheduler')>()
+  return { ...actual, stopSync: vi.fn(actual.stopSync), startSync: vi.fn(actual.startSync) }
+})
 
 vi.mock('@/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/client')>()
-  return { ...actual, api: vi.fn() }
+  return {
+    ...actual,
+    api: vi.fn().mockImplementation(async (path: string) => {
+      if (typeof path === 'string' && path.startsWith('/sync/pull')) {
+        return { placements: [], hourLogs: [], nextCursor: null, hasMore: false }
+      }
+      return {}
+    }),
+  }
 })
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -24,10 +38,16 @@ function withProvider({ children }: { children: ReactNode }) {
   )
 }
 
-beforeEach(() => localStorage.clear())
-afterEach(() => {
+beforeEach(async () => {
+  localStorage.clear()
+  sessionStorage.clear()
+  await Promise.all(db.tables.map((t) => t.clear()))
+})
+afterEach(async () => {
   vi.clearAllMocks()
   localStorage.clear()
+  sessionStorage.clear()
+  await Promise.all(db.tables.map((t) => t.clear()))
 })
 
 describe('useAuth', () => {
@@ -62,6 +82,7 @@ describe('AuthProvider', () => {
   it('login stores the token and user, and updates the context', async () => {
     vi.mocked(api).mockResolvedValue({
       accessToken: 'tok-123',
+      refreshToken: 'ref-123',
       user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
     })
     const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
@@ -75,13 +96,15 @@ describe('AuthProvider', () => {
       body: JSON.stringify({ email: 'empresa0@miyura.com', password: 'yura1234' }),
     })
     expect(localStorage.getItem('access_token')).toBe('tok-123')
+    expect(localStorage.getItem('refresh_token')).toBe('ref-123')
     expect(result.current.user?.companyId).toBe(1)
     expect(result.current.role).toBe('COMPANY')
   })
 
-  it('logout clears storage and the context', async () => {
+  it('logout clears storage, context and calls POST /auth/logout with refreshToken', async () => {
     vi.mocked(api).mockResolvedValue({
       accessToken: 'tok-123',
+      refreshToken: 'ref-tok-123',
       user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
     })
     const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
@@ -89,12 +112,70 @@ describe('AuthProvider', () => {
       await result.current.login('empresa0@miyura.com', 'yura1234')
     })
 
+    expect(localStorage.getItem('refresh_token')).toBe('ref-tok-123')
+
     await act(async () => {
       await result.current.logout()
     })
 
+    expect(api).toHaveBeenCalledWith('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken: 'ref-tok-123' }),
+    })
     expect(localStorage.getItem('access_token')).toBeNull()
+    expect(localStorage.getItem('refresh_token')).toBeNull()
     expect(localStorage.getItem('user')).toBeNull()
+    expect(result.current.user).toBeNull()
+  })
+
+  it('logout proceeds with local cleanup even if POST /auth/logout fails due to network error', async () => {
+    vi.mocked(api).mockResolvedValueOnce({
+      accessToken: 'tok-123',
+      refreshToken: 'ref-fail-token',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+
+    // El endpoint de logout falla por caída de red
+    vi.mocked(api).mockRejectedValueOnce(new Error('Network error'))
+
+    await act(async () => {
+      await result.current.logout()
+    })
+
+    // Debe haber limpiado localmente a pesar del fallo de red
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(localStorage.getItem('refresh_token')).toBeNull()
+    expect(localStorage.getItem('user')).toBeNull()
+    expect(result.current.user).toBeNull()
+  })
+
+  it('logout no espera a POST /auth/logout: sin conexión la sesión local se cierra igual', async () => {
+    vi.mocked(api).mockResolvedValueOnce({
+      accessToken: 'tok-123',
+      refreshToken: 'ref-hang-token',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+
+    // La revocación nunca responde (red colgada)
+    vi.mocked(api).mockImplementationOnce(() => new Promise(() => {}))
+
+    await act(async () => {
+      await result.current.logout()
+    })
+
+    expect(api).toHaveBeenCalledWith('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken: 'ref-hang-token' }),
+    })
+    expect(localStorage.getItem('refresh_token')).toBeNull()
     expect(result.current.user).toBeNull()
   })
 
@@ -250,7 +331,7 @@ describe('AuthProvider', () => {
     expect(await db.outbox.count()).toBe(10)
   })
 
-  it('wipes Dexie data if a DIFFERENT user logs in on a shared machine after 401', async () => {
+  it('throws UnsyncedHoursWarningError and preserves outbox if a DIFFERENT user logs in on a shared machine with pending hours', async () => {
     // Inserta datos del usuario 5
     await db.outbox.put({
       clientOpId: 'op-user5',
@@ -272,13 +353,75 @@ describe('AuthProvider', () => {
     })
     const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
 
-    // Usuario 99 inicia sesión (usuario distinto al 5)
+    // Usuario 99 intenta iniciar sesión sin forceDiscard
+    await expect(
+      act(async () => {
+        await result.current.login('otro@miyura.com', 'pass1234')
+      }),
+    ).rejects.toBeInstanceOf(UnsyncedHoursWarningError)
+
+    // Las horas del usuario anterior siguen intactas
+    expect(await db.outbox.count()).toBe(1)
+    expect(localStorage.getItem('last_user_id')).toBe('5')
+  })
+
+  it('wipes Dexie data in a single transaction if a DIFFERENT user logs in with forceDiscard: true', async () => {
+    await db.outbox.put({
+      clientOpId: 'op-user5',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
+      payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Student 5 work' },
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+    })
+    localStorage.setItem('last_user_id', '5')
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-999',
+      user: { id: 99, email: 'otro@miyura.com', fullName: 'Usuario 99', role: 'STUDENT', companyId: null },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+
+    // Usuario 99 confirma descartar
+    await act(async () => {
+      await result.current.login('otro@miyura.com', 'pass1234', { forceDiscard: true })
+    })
+
+    // Dexie debe haber sido limpiado en una sola transacción
+    expect(await db.outbox.count()).toBe(0)
+    expect(localStorage.getItem('last_user_id')).toBe('99')
+  })
+
+  it('wipes Dexie data without warning if a DIFFERENT user logs in and there are no pending hours', async () => {
+    // Usuario 5 dejó tablas con datos pero SIN horas en outbox
+    await db.placements.put({
+      id: 1,
+      studentId: 5,
+      tutorId: 1,
+      companyId: 1,
+      startDate: '2026-01-01',
+      endDate: '2026-06-01',
+      requiredHours: 200,
+      status: 'ACTIVE',
+      version: 1,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })
+    expect(await db.outbox.count()).toBe(0)
+    localStorage.setItem('last_user_id', '5')
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-999',
+      user: { id: 99, email: 'otro@miyura.com', fullName: 'Usuario 99', role: 'STUDENT', companyId: null },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+
     await act(async () => {
       await result.current.login('otro@miyura.com', 'pass1234')
     })
 
-    // Dexie debe haber sido limpiado para proteger el aislamiento (caso C-2)
-    expect(await db.outbox.count()).toBe(0)
+    expect(await db.placements.count()).toBe(0)
     expect(localStorage.getItem('last_user_id')).toBe('99')
   })
 
@@ -344,5 +487,160 @@ describe('AuthProvider', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  it('reutiliza la respuesta del primer login al confirmar descarte sin llamar nuevamente a /auth/login', async () => {
+    await db.outbox.put({
+      clientOpId: 'op-reuse',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
+      payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Student 5 work' },
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+    })
+    localStorage.setItem('last_user_id', '5')
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-reutilizado',
+      refreshToken: 'ref-reutilizado',
+      user: { id: 99, email: 'otro@miyura.com', fullName: 'Usuario 99', role: 'STUDENT', companyId: null },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+
+    // Primer intento: falla porque hay horas pendientes
+    await act(async () => {
+      await expect(result.current.login('otro@miyura.com', 'pass1234')).rejects.toThrow(
+        UnsyncedHoursWarningError,
+      )
+    })
+    const loginCallsFirst = vi.mocked(api).mock.calls.filter(([url]) => url === '/auth/login')
+    expect(loginCallsFirst).toHaveLength(1)
+
+    // Confirmar descarte: reutiliza la respuesta anterior sin invocar /auth/login otra vez
+    await act(async () => {
+      await result.current.confirmDiscard!()
+    })
+
+    const loginCallsSecond = vi.mocked(api).mock.calls.filter(([url]) => url === '/auth/login')
+    expect(loginCallsSecond).toHaveLength(1)
+    expect(await db.outbox.count()).toBe(0)
+    expect(localStorage.getItem('access_token')).toBe('tok-reutilizado')
+    expect(localStorage.getItem('refresh_token')).toBe('ref-reutilizado')
+    expect(result.current.user?.id).toBe(99)
+  })
+
+  it('logout previene el borrado en silencio de outbox si hay horas pendientes y no se pasa forceDiscard', async () => {
+    await db.outbox.put({
+      clientOpId: 'op-logout-warn',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
+      payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Work' },
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+    })
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-123',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+
+    await act(async () => {
+      await expect(result.current.logout()).rejects.toThrow(UnsyncedHoursWarningError)
+    })
+
+    // Las horas se preservan y la sesión continúa intacta
+    expect(await db.outbox.count()).toBe(1)
+    expect(result.current.user).not.toBeNull()
+  })
+
+  it('si el logout se cancela por horas pendientes, el sync no se detiene', async () => {
+    await db.outbox.put({
+      clientOpId: 'op-logout-cancel-sync',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
+      payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Work' },
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+    })
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-123',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+    vi.mocked(scheduler.stopSync).mockClear()
+
+    await act(async () => {
+      await expect(result.current.logout()).rejects.toThrow(UnsyncedHoursWarningError)
+    })
+
+    // Cancelar el aviso deja la sesión abierta: el sync debe seguir corriendo.
+    expect(scheduler.stopSync).not.toHaveBeenCalled()
+  })
+
+  it('logout con forceDiscard: true purga Dexie, revoca el refreshToken y completa el cierre de sesión', async () => {
+    await db.outbox.put({
+      clientOpId: 'op-logout-discard',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
+      payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Work' },
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+    })
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-123',
+      refreshToken: 'ref-123',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+
+    await act(async () => {
+      await result.current.logout({ forceDiscard: true })
+    })
+
+    expect(await db.outbox.count()).toBe(0)
+    expect(api).toHaveBeenCalledWith('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken: 'ref-123' }),
+    })
+    expect(result.current.user).toBeNull()
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(localStorage.getItem('refresh_token')).toBeNull()
+  })
+
+  it('reactiva startSync al hacer login exitoso', async () => {
+    const scheduler = await import('@/offline/sync/scheduler')
+    const startSyncSpy = vi.spyOn(scheduler, 'startSync')
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-sync',
+      user: { id: 10, email: 'user10@miyura.com', fullName: 'User 10', role: 'STUDENT', companyId: null },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+
+    await act(async () => {
+      await result.current.login('user10@miyura.com', 'pass')
+    })
+
+    expect(startSyncSpy).toHaveBeenCalled()
+    startSyncSpy.mockRestore()
   })
 })
