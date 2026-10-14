@@ -122,18 +122,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function logout() {
     isHandling401Ref.current = false
     const refreshToken = localStorage.getItem('refresh_token')
-    if (refreshToken) {
-      try {
-        await api('/auth/logout', {
-          method: 'POST',
-          body: JSON.stringify({ refreshToken }),
-        })
-      } catch {
-        // En caso de fallo de red o del servidor, se continúa con la limpieza
-        // local para garantizar que los datos del usuario se purguen siempre.
-      }
-    }
     await performCleanup()
+    if (refreshToken) {
+      // La revocación en el servidor es de mejor esfuerzo y no bloquea el cierre local: sin conexión
+      // el refresh token queda vivo hasta que expire, pero el usuario no se queda esperando.
+      void api('/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({ refreshToken }),
+      }).catch(() => undefined)
+    }
     getCrossTabChannel().postMessage('LOGOUT', { reason: 'USER_LOGOUT' })
     navigate('/login')
   }

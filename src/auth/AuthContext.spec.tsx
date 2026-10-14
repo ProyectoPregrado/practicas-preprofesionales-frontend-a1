@@ -133,6 +133,32 @@ describe('AuthProvider', () => {
     expect(result.current.user).toBeNull()
   })
 
+  it('logout no espera a POST /auth/logout: sin conexión la sesión local se cierra igual', async () => {
+    vi.mocked(api).mockResolvedValueOnce({
+      accessToken: 'tok-123',
+      refreshToken: 'ref-hang-token',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+
+    // La revocación nunca responde (red colgada)
+    vi.mocked(api).mockImplementationOnce(() => new Promise(() => {}))
+
+    await act(async () => {
+      await result.current.logout()
+    })
+
+    expect(api).toHaveBeenCalledWith('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken: 'ref-hang-token' }),
+    })
+    expect(localStorage.getItem('refresh_token')).toBeNull()
+    expect(result.current.user).toBeNull()
+  })
+
   it('logout wipes local Dexie data, including the sync checkpoint, so the next session starts clean', async () => {
     await db.placements.put({
       id: 1,
