@@ -82,6 +82,7 @@ describe('AuthProvider', () => {
   it('login stores the token and user, and updates the context', async () => {
     vi.mocked(api).mockResolvedValue({
       accessToken: 'tok-123',
+      refreshToken: 'ref-123',
       user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
     })
     const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
@@ -95,13 +96,15 @@ describe('AuthProvider', () => {
       body: JSON.stringify({ email: 'empresa0@miyura.com', password: 'yura1234' }),
     })
     expect(localStorage.getItem('access_token')).toBe('tok-123')
+    expect(localStorage.getItem('refresh_token')).toBe('ref-123')
     expect(result.current.user?.companyId).toBe(1)
     expect(result.current.role).toBe('COMPANY')
   })
 
-  it('logout clears storage and the context', async () => {
+  it('logout clears storage, context and calls POST /auth/logout with refreshToken', async () => {
     vi.mocked(api).mockResolvedValue({
       accessToken: 'tok-123',
+      refreshToken: 'ref-tok-123',
       user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
     })
     const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
@@ -109,12 +112,70 @@ describe('AuthProvider', () => {
       await result.current.login('empresa0@miyura.com', 'yura1234')
     })
 
+    expect(localStorage.getItem('refresh_token')).toBe('ref-tok-123')
+
     await act(async () => {
       await result.current.logout()
     })
 
+    expect(api).toHaveBeenCalledWith('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken: 'ref-tok-123' }),
+    })
     expect(localStorage.getItem('access_token')).toBeNull()
+    expect(localStorage.getItem('refresh_token')).toBeNull()
     expect(localStorage.getItem('user')).toBeNull()
+    expect(result.current.user).toBeNull()
+  })
+
+  it('logout proceeds with local cleanup even if POST /auth/logout fails due to network error', async () => {
+    vi.mocked(api).mockResolvedValueOnce({
+      accessToken: 'tok-123',
+      refreshToken: 'ref-fail-token',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+
+    // El endpoint de logout falla por caída de red
+    vi.mocked(api).mockRejectedValueOnce(new Error('Network error'))
+
+    await act(async () => {
+      await result.current.logout()
+    })
+
+    // Debe haber limpiado localmente a pesar del fallo de red
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(localStorage.getItem('refresh_token')).toBeNull()
+    expect(localStorage.getItem('user')).toBeNull()
+    expect(result.current.user).toBeNull()
+  })
+
+  it('logout no espera a POST /auth/logout: sin conexión la sesión local se cierra igual', async () => {
+    vi.mocked(api).mockResolvedValueOnce({
+      accessToken: 'tok-123',
+      refreshToken: 'ref-hang-token',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+
+    // La revocación nunca responde (red colgada)
+    vi.mocked(api).mockImplementationOnce(() => new Promise(() => {}))
+
+    await act(async () => {
+      await result.current.logout()
+    })
+
+    expect(api).toHaveBeenCalledWith('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken: 'ref-hang-token' }),
+    })
+    expect(localStorage.getItem('refresh_token')).toBeNull()
     expect(result.current.user).toBeNull()
   })
 
