@@ -112,7 +112,8 @@ export function refreshSession(): Promise<string | null> {
 }
 
 export async function api<T>(path: string, init: RequestInit = {}, isRetry = false): Promise<T> {
-  const isAuthEndpoint = path.startsWith('/auth/login') || path.startsWith('/auth/refresh')
+  const isAuthEndpoint =
+    path.startsWith('/auth/login') || path.startsWith('/auth/refresh') || path.startsWith('/auth/logout')
 
   if (!isAuthEndpoint && !isRetry) {
     const currentToken = localStorage.getItem('access_token')
@@ -142,7 +143,7 @@ export async function api<T>(path: string, init: RequestInit = {}, isRetry = fal
         throw new ApiError(res.status, body.message ?? `Error ${res.status}`)
       }
 
-      if (!isRetry && !path.startsWith('/auth/refresh') && localStorage.getItem('refresh_token')) {
+      if (!isRetry && !path.startsWith('/auth/refresh') && !path.startsWith('/auth/logout') && localStorage.getItem('refresh_token')) {
         try {
           const refreshedToken = await refreshSession()
           if (refreshedToken) {
@@ -161,6 +162,10 @@ export async function api<T>(path: string, init: RequestInit = {}, isRetry = fal
     }
 
     throw new ApiError(res.status, body.message ?? `Error ${res.status}`)
+  }
+
+  if (res.status === 204) {
+    return undefined as unknown as T
   }
 
   return res.json() as Promise<T>
