@@ -19,6 +19,7 @@ export interface AuthUser {
 
 interface LoginResponse {
   accessToken: string
+  refreshToken?: string
   user: AuthUser
 }
 
@@ -91,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearSessionOnly, navigate])
 
   async function login(email: string, password: string) {
-    const { accessToken, user: loggedUser } = await api<LoginResponse>('/auth/login', {
+    const { accessToken, refreshToken, user: loggedUser } = await api<LoginResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     })
@@ -105,6 +106,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     localStorage.setItem('last_user_id', String(loggedUser.id))
     localStorage.setItem('access_token', accessToken)
+    if (refreshToken) {
+      localStorage.setItem('refresh_token', refreshToken)
+    }
     localStorage.setItem('user', JSON.stringify(loggedUser))
     // AuthProvider sigue montado al volver a /login: sin este reset, el segundo
     // vencimiento de la misma pestaña se ignoraría.
