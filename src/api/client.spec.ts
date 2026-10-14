@@ -221,6 +221,54 @@ describe('api', () => {
       unsubscribe()
     })
 
+    it('un fallo transitorio de /auth/refresh (5xx) NO cierra la sesión ni borra los tokens', async () => {
+      localStorage.setItem('access_token', 'expired-token')
+      localStorage.setItem('refresh_token', 'valid-refresh-token')
+      const listener = vi.fn()
+      const unsubscribe = onUnauthorized(listener)
+      vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => {
+        if (url.endsWith('/offers')) return { ok: false, status: 401, json: async () => ({ message: 'jwt expired' }) }
+        return { ok: false, status: 503, json: async () => ({}) }
+      }))
+
+      await expect(api('/offers')).rejects.toBeInstanceOf(ApiError)
+
+      expect(listener).not.toHaveBeenCalled()
+      expect(localStorage.getItem('refresh_token')).toBe('valid-refresh-token')
+      unsubscribe()
+    })
+
+    it('un error de red en /auth/refresh NO cierra la sesión', async () => {
+      localStorage.setItem('access_token', 'expired-token')
+      localStorage.setItem('refresh_token', 'valid-refresh-token')
+      const listener = vi.fn()
+      const unsubscribe = onUnauthorized(listener)
+      vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => {
+        if (url.endsWith('/offers')) return { ok: false, status: 401, json: async () => ({ message: 'jwt expired' }) }
+        throw new TypeError('Failed to fetch')
+      }))
+
+      await expect(api('/offers')).rejects.toBeInstanceOf(ApiError)
+
+      expect(listener).not.toHaveBeenCalled()
+      unsubscribe()
+    })
+
+    it('si el refresh token desaparece antes de renovar, el siguiente refresh sigue funcionando', async () => {
+      const { refreshSession } = await import('./client')
+      localStorage.removeItem('refresh_token')
+      expect(await refreshSession()).toBeNull()
+
+      localStorage.setItem('refresh_token', 'valid-refresh-token')
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ accessToken: 'new-token', refreshToken: 'new-refresh' }),
+      }))
+
+      expect(await refreshSession()).toBe('new-token')
+    })
+
     it('maneja llamadas concurrentes bajo 401 (Promise.all) llamando a /auth/refresh UNA SOLA VEZ', async () => {
       localStorage.setItem('access_token', 'expired-token')
       localStorage.setItem('refresh_token', 'shared-refresh-token')
