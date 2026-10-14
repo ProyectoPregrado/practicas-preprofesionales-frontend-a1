@@ -4,19 +4,26 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/client'
 import { SESSION_EXPIRED_MESSAGE } from '@/auth/auth.constants'
+import { UnsyncedHoursWarningError } from '@/auth/AuthContext'
 import { LoginPage } from './LoginPage'
 
 const mockLogin = vi.fn()
+const mockConfirmDiscard = vi.fn()
 const mockNavigate = vi.fn()
 
-vi.mock('@/auth/AuthContext', () => ({
-  useAuth: () => ({
-    login: mockLogin,
-    user: null,
-    role: null,
-    logout: vi.fn(),
-  }),
-}))
+vi.mock('@/auth/AuthContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/auth/AuthContext')>()
+  return {
+    ...actual,
+    useAuth: () => ({
+      login: mockLogin,
+      confirmDiscard: mockConfirmDiscard,
+      user: null,
+      role: null,
+      logout: vi.fn(),
+    }),
+  }
+})
 
 vi.mock('react-router-dom', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-router-dom')>()
@@ -96,6 +103,64 @@ describe('LoginPage', () => {
 
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalledWith('estudiante@miyura.com', 'secret123')
+      expect(mockNavigate).toHaveBeenCalledWith('/')
+    })
+  })
+
+  it('muestra el modal de advertencia si hay horas sin sincronizar y permite cancelar sin borrar', async () => {
+    const user = userEvent.setup()
+    mockLogin.mockRejectedValueOnce(new UnsyncedHoursWarningError(3))
+
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    )
+
+    await user.type(screen.getByLabelText(/correo institucional/i), 'otro@miyura.com')
+    await user.type(screen.getByLabelText(/contraseña/i), 'pass123')
+    await user.click(screen.getByRole('button', { name: /entrar/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/Horas sin sincronizar en este equipo/i)).toBeInTheDocument()
+      expect(screen.getByText(/Hay 3 registros de horas pendientes/i)).toBeInTheDocument()
+    })
+
+    // El usuario cancela
+    await user.click(screen.getByRole('button', { name: /cancelar/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Horas sin sincronizar en este equipo/i)).not.toBeInTheDocument()
+    })
+    expect(mockLogin).toHaveBeenCalledTimes(1)
+    expect(mockNavigate).not.toHaveBeenCalled()
+  })
+
+  it('permite confirmar el descarte de horas y completar el inicio de sesión', async () => {
+    const user = userEvent.setup()
+    mockLogin
+      .mockRejectedValueOnce(new UnsyncedHoursWarningError(2))
+      .mockResolvedValueOnce(undefined)
+
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    )
+
+    await user.type(screen.getByLabelText(/correo institucional/i), 'otro@miyura.com')
+    await user.type(screen.getByLabelText(/contraseña/i), 'pass123')
+    await user.click(screen.getByRole('button', { name: /entrar/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/Horas sin sincronizar en este equipo/i)).toBeInTheDocument()
+    })
+
+    // El usuario confirma descartar horas y entrar
+    await user.click(screen.getByRole('button', { name: /descartar horas y entrar/i }))
+
+    await waitFor(() => {
+      expect(mockConfirmDiscard).toHaveBeenCalledTimes(1)
       expect(mockNavigate).toHaveBeenCalledWith('/')
     })
   })

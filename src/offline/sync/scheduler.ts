@@ -133,22 +133,42 @@ export function syncNow(): Promise<void> {
   return currentSync
 }
 
+let activeStop: (() => void) | null = null
+
+/**
+ * Detiene cualquier ciclo de sincronización activo, limpia timers y retira listeners.
+ */
+export function stopSync(): void {
+  if (activeStop) {
+    activeStop()
+    activeStop = null
+  }
+  cancelRetry()
+  setStatus({ syncing: false })
+}
+
 /**
  * Arranca el scheduler: sincroniza al montar, al recuperar conexión, y cada
  * 60s. Cancela reintentos ante desconexión y reactiva al volver en línea.
+ * Detiene el ciclo automáticamente si no hay sesión activa.
  */
 export function startSync(config?: Partial<RetryConfig>): () => void {
+  stopSync()
+
   if (config) {
     setRetryConfig(config)
   }
 
-  void syncNow()
+  if (hasSession()) {
+    void syncNow()
+  }
 
   const handleOnline = () => {
     setStatus({ online: true })
     cancelRetry()
-    // Reactivar automáticamente al reconectar
-    void syncNow()
+    if (hasSession()) {
+      void syncNow()
+    }
   }
 
   const handleOffline = () => {
@@ -161,13 +181,23 @@ export function startSync(config?: Partial<RetryConfig>): () => void {
   window.addEventListener('offline', handleOffline)
 
   const intervalId = window.setInterval(() => {
+    if (!hasSession()) {
+      stopSync()
+      return
+    }
     void syncNow()
   }, SYNC_INTERVAL_MS)
 
-  return () => {
+  const cleanup = () => {
     window.removeEventListener('online', handleOnline)
     window.removeEventListener('offline', handleOffline)
     window.clearInterval(intervalId)
     cancelRetry()
+    if (activeStop === cleanup) {
+      activeStop = null
+    }
   }
+
+  activeStop = cleanup
+  return cleanup
 }

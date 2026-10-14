@@ -1,7 +1,15 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { useAuth, type Role } from '@/auth/AuthContext'
+import { useAuth, type Role, UnsyncedHoursWarningError } from '@/auth/AuthContext'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { SyncIndicator } from '@/components/SyncIndicator'
 import { startSync } from '@/offline/sync/scheduler'
 import { cn } from '@/lib/utils'
@@ -56,13 +64,37 @@ function initialsOf(fullName: string | undefined): string {
 
 export function AppLayout() {
   const { user, role, logout } = useAuth()
+  const [pendingUnsyncedCount, setPendingUnsyncedCount] = useState<number | null>(null)
+  const [submittingLogout, setSubmittingLogout] = useState(false)
 
-  // Se llama una sola vez para toda la sesión autenticada: AppLayout envuelve
-  // todas las rutas protegidas vía <Outlet />, así que no se remonta al
-  // navegar entre pantallas y no se crean timers duplicados.
+  // Reactiva sync cuando hay una sesión autenticada activa
   useEffect(() => {
-    return startSync()
-  }, [])
+    if (user) {
+      return startSync()
+    }
+  }, [user])
+
+  async function handleLogout() {
+    try {
+      await logout()
+    } catch (err) {
+      if (err instanceof UnsyncedHoursWarningError) {
+        setPendingUnsyncedCount(err.pendingCount)
+      } else {
+        throw err
+      }
+    }
+  }
+
+  async function handleConfirmDiscardLogout() {
+    setSubmittingLogout(true)
+    try {
+      await logout({ forceDiscard: true })
+      setPendingUnsyncedCount(null)
+    } finally {
+      setSubmittingLogout(false)
+    }
+  }
 
   const navGroups = role ? NAV_BY_ROLE[role] : []
 
@@ -89,7 +121,7 @@ export function AppLayout() {
               <span className="block text-11 text-inkSoft">{role ? ROLE_LABEL[role] : ''}</span>
             </span>
           </div>
-          <Button type="button" variant="outline" size="sm" onClick={logout}>
+          <Button type="button" variant="outline" size="sm" onClick={handleLogout}>
             Salir
           </Button>
         </div>
@@ -137,6 +169,43 @@ export function AppLayout() {
           </div>
         </main>
       </div>
+
+      <Dialog
+        open={pendingUnsyncedCount !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingUnsyncedCount(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Horas sin sincronizar en este equipo</DialogTitle>
+            <DialogDescription>
+              Hay {pendingUnsyncedCount}{' '}
+              {pendingUnsyncedCount === 1 ? 'registro de hora' : 'registros de horas'} pendiente
+              {pendingUnsyncedCount === 1 ? '' : 's'} de sincronizar.
+              Si cerrás sesión en este equipo compartido, se descartarán definitivamente.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPendingUnsyncedCount(null)}
+              disabled={submittingLogout}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleConfirmDiscardLogout}
+              disabled={submittingLogout}
+            >
+              {submittingLogout ? 'Descartando…' : 'Descartar horas y salir'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -3,7 +3,7 @@ import { db } from '@/offline/db'
 import { CrossTabChannel, getCrossTabLock, resetCrossTabForTesting } from './crossTab'
 import { pullChanges } from './pull'
 import { pushOutbox } from './push'
-import { cancelRetry, getRetryTimer, setRetryConfig, startSync, syncNow } from './scheduler'
+import { cancelRetry, getRetryTimer, setRetryConfig, startSync, stopSync, syncNow } from './scheduler'
 import { _resetStatusForTesting, getStatus, setStatus, subscribe, type SyncStatus } from './status'
 
 vi.mock('./pull', () => ({ pullChanges: vi.fn() }))
@@ -269,5 +269,84 @@ describe('startSync - resiliencia y reconexión', () => {
     expect(mockedPull).toHaveBeenCalled()
 
     stop()
+  })
+
+  it('no dispara syncNow al arrancar startSync si no hay sesión activa', () => {
+    const stop = startSync()
+
+    expect(mockedPull).not.toHaveBeenCalled()
+    expect(mockedPush).not.toHaveBeenCalled()
+
+    stop()
+  })
+
+  it('stopSync detiene el sync, cancela reintentos pendientes y retira los listeners', async () => {
+    localStorage.setItem('access_token', 'tok')
+    mockedPull.mockResolvedValue({ applied: 0, hasMore: false })
+    mockedPush.mockResolvedValue({ applied: 0, failed: 0 })
+
+    const removeSpy = vi.spyOn(window, 'removeEventListener')
+    const clearTimeoutSpy = vi.spyOn(window, 'clearInterval')
+
+    startSync()
+    await syncNow()
+    setStatus({ retrying: true })
+
+    stopSync()
+
+    expect(getStatus().syncing).toBe(false)
+    expect(getStatus().retrying).toBe(false)
+    expect(removeSpy).toHaveBeenCalledWith('online', expect.any(Function))
+    expect(removeSpy).toHaveBeenCalledWith('offline', expect.any(Function))
+    expect(clearTimeoutSpy).toHaveBeenCalled()
+  })
+
+  it('el intervalo periódico de 60s se detiene automáticamente si vence la sesión', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval')
+    localStorage.setItem('access_token', 'tok')
+    mockedPull.mockResolvedValue({ applied: 0, hasMore: false })
+    mockedPush.mockResolvedValue({ applied: 0, failed: 0 })
+
+    startSync()
+    await syncNow()
+    mockedPull.mockClear()
+    mockedPush.mockClear()
+
+    const intervalCallback = setIntervalSpy.mock.calls[setIntervalSpy.mock.calls.length - 1][0] as () => void
+    expect(typeof intervalCallback).toBe('function')
+
+    // La sesión caduca o se borra
+    localStorage.removeItem('access_token')
+
+    // Disparamos el tick del intervalo
+    intervalCallback()
+
+    // No debe ejecutarse pull ni push y el sync se detiene
+    expect(mockedPull).not.toHaveBeenCalled()
+    expect(mockedPush).not.toHaveBeenCalled()
+    expect(getStatus().syncing).toBe(false)
+
+    stopSync()
+  })
+
+  it('startSync reinicia el ciclo de sincronización tras haber sido detenido con stopSync', async () => {
+    localStorage.setItem('access_token', 'tok')
+    mockedPull.mockResolvedValue({ applied: 0, hasMore: false })
+    mockedPush.mockResolvedValue({ applied: 0, failed: 0 })
+
+    startSync()
+    await syncNow()
+    expect(mockedPull).toHaveBeenCalled()
+
+    // Se hace logout -> stopSync
+    stopSync()
+    mockedPull.mockClear()
+
+    // El usuario se vuelve a conectar con sesión -> startSync reinicia el ciclo
+    startSync()
+    await syncNow()
+    expect(mockedPull).toHaveBeenCalled()
+
+    stopSync()
   })
 })

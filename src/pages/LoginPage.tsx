@@ -1,17 +1,26 @@
 import { type FormEvent, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '@/api/client'
-import { useAuth } from '@/auth/AuthContext'
+import { useAuth, UnsyncedHoursWarningError } from '@/auth/AuthContext'
 import { SESSION_EXPIRED_MESSAGE } from '@/auth/auth.constants'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 export function LoginPage() {
-  const { login } = useAuth()
+  const { login, confirmDiscard } = useAuth()
   const navigate = useNavigate()
   
   const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null)
+  const [pendingUnsyncedCount, setPendingUnsyncedCount] = useState<number | null>(null)
 
   useEffect(() => {
     if (sessionStorage.getItem('session_expired') === 'true') {
@@ -31,6 +40,32 @@ export function LoginPage() {
     setSubmitting(true)
     try {
       await login(email, password)
+      navigate('/')
+    } catch (err) {
+      if (err instanceof UnsyncedHoursWarningError) {
+        setPendingUnsyncedCount(err.pendingCount)
+        return
+      }
+      setError(err instanceof ApiError ? err.message : 'no se pudo iniciar sesión')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  function handleCancelDiscard() {
+    setPendingUnsyncedCount(null)
+  }
+
+  async function handleConfirmDiscard() {
+    setSubmitting(true)
+    setError(null)
+    try {
+      if (confirmDiscard) {
+        await confirmDiscard()
+      } else {
+        await login(email, password, { forceDiscard: true })
+      }
+      setPendingUnsyncedCount(null)
       navigate('/')
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'no se pudo iniciar sesión')
@@ -104,6 +139,43 @@ export function LoginPage() {
           </form>
         </div>
       </div>
+
+      <Dialog
+        open={pendingUnsyncedCount !== null}
+        onOpenChange={(open) => {
+          if (!open) handleCancelDiscard()
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Horas sin sincronizar en este equipo</DialogTitle>
+            <DialogDescription>
+              Hay {pendingUnsyncedCount}{' '}
+              {pendingUnsyncedCount === 1 ? 'registro de hora' : 'registros de horas'} pendiente
+              {pendingUnsyncedCount === 1 ? '' : 's'} de sincronizar del usuario anterior.
+              Si entrás con otra cuenta, estas horas se descartarán definitivamente.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleCancelDiscard}
+              disabled={submitting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleConfirmDiscard}
+              disabled={submitting}
+            >
+              {submitting ? 'Descartando…' : 'Descartar horas y entrar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
