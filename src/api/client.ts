@@ -48,47 +48,66 @@ export function isTokenExpiringSoon(token: string, bufferSeconds = 30): boolean 
 
 let refreshPromise: Promise<string | null> | null = null
 
-export async function refreshSession(): Promise<string | null> {
-  if (refreshPromise) {
-    return refreshPromise
+// El servidor no pudo responder (5xx, red caída): la sesión puede seguir siendo válida,
+// así que no se cierra. Solo un rechazo definitivo (401/403) devuelve null.
+export class RefreshUnavailableError extends Error {
+  constructor() {
+    super('No se pudo renovar la sesión, intenta de nuevo')
+    this.name = 'RefreshUnavailableError'
+  }
+}
+
+async function requestRefresh(): Promise<string | null> {
+  const refreshToken = localStorage.getItem('refresh_token')
+  if (!refreshToken) {
+    return null
   }
 
-  refreshPromise = (async () => {
-    const refreshToken = localStorage.getItem('refresh_token')
-    if (!refreshToken) {
-      return null
-    }
+  let res: Response
+  try {
+    res = await fetch(`${API_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    })
+  } catch {
+    throw new RefreshUnavailableError()
+  }
 
-    try {
-      const res = await fetch(`${API_URL}/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
-      })
+  if (res.status === 401 || res.status === 403) {
+    return null
+  }
+  if (!res.ok) {
+    throw new RefreshUnavailableError()
+  }
 
-      if (!res.ok) {
-        return null
-      }
+  const data = (await res.json().catch(() => null)) as {
+    accessToken?: string
+    refreshToken?: string
+    user?: unknown
+  } | null
+  if (!data?.accessToken) {
+    return null
+  }
+  localStorage.setItem('access_token', data.accessToken)
+  if (data.refreshToken) {
+    localStorage.setItem('refresh_token', data.refreshToken)
+  }
+  if (data.user) {
+    localStorage.setItem('user', JSON.stringify(data.user))
+  }
+  return data.accessToken
+}
 
-      const data = (await res.json()) as { accessToken?: string; refreshToken?: string; user?: unknown }
-      if (data?.accessToken) {
-        localStorage.setItem('access_token', data.accessToken)
-        if (data.refreshToken) {
-          localStorage.setItem('refresh_token', data.refreshToken)
-        }
-        if (data.user) {
-          localStorage.setItem('user', JSON.stringify(data.user))
-        }
-        return data.accessToken
-      }
-      return null
-    } catch {
-      return null
-    } finally {
+// Single-flight: las llamadas concurrentes comparten una sola renovación (el refresh token rota,
+// un segundo intento con el token viejo fallaría). El `.finally` va sobre la promesa y no dentro
+// de la función async: así se limpia aunque la función retorne antes del primer `await`.
+export function refreshSession(): Promise<string | null> {
+  if (!refreshPromise) {
+    refreshPromise = requestRefresh().finally(() => {
       refreshPromise = null
-    }
-  })()
-
+    })
+  }
   return refreshPromise
 }
 
@@ -100,7 +119,9 @@ export async function api<T>(path: string, init: RequestInit = {}, isRetry = fal
     const currentToken = localStorage.getItem('access_token')
     const refreshToken = localStorage.getItem('refresh_token')
     if (currentToken && refreshToken && isTokenExpiringSoon(currentToken)) {
-      await refreshSession()
+      // Si la renovación proactiva no está disponible, se sigue con el token actual:
+      // el servidor decide y, si responde 401, el camino reactivo de abajo lo resuelve.
+      await refreshSession().catch(() => null)
     }
   }
 
@@ -123,9 +144,17 @@ export async function api<T>(path: string, init: RequestInit = {}, isRetry = fal
       }
 
       if (!isRetry && !path.startsWith('/auth/refresh') && !path.startsWith('/auth/logout') && localStorage.getItem('refresh_token')) {
-        const refreshedToken = await refreshSession()
-        if (refreshedToken) {
-          return api<T>(path, init, true)
+        try {
+          const refreshedToken = await refreshSession()
+          if (refreshedToken) {
+            return api<T>(path, init, true)
+          }
+        } catch (err) {
+          // Fallo transitorio de la renovación: no se cierra la sesión.
+          if (err instanceof RefreshUnavailableError) {
+            throw new ApiError(res.status, err.message)
+          }
+          throw err
         }
       }
 
