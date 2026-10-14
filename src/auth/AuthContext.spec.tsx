@@ -9,7 +9,15 @@ import { AuthProvider, useAuth, UnsyncedHoursWarningError } from './AuthContext'
 
 vi.mock('@/api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/client')>()
-  return { ...actual, api: vi.fn() }
+  return {
+    ...actual,
+    api: vi.fn().mockImplementation(async (path: string) => {
+      if (typeof path === 'string' && path.startsWith('/sync/pull')) {
+        return { placements: [], hourLogs: [], nextCursor: null, hasMore: false }
+      }
+      return {}
+    }),
+  }
 })
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -412,5 +420,131 @@ describe('AuthProvider', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  it('reutiliza la respuesta del primer login al confirmar descarte sin llamar nuevamente a /auth/login', async () => {
+    await db.outbox.put({
+      clientOpId: 'op-reuse',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
+      payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Student 5 work' },
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+    })
+    localStorage.setItem('last_user_id', '5')
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-reutilizado',
+      refreshToken: 'ref-reutilizado',
+      user: { id: 99, email: 'otro@miyura.com', fullName: 'Usuario 99', role: 'STUDENT', companyId: null },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+
+    // Primer intento: falla porque hay horas pendientes
+    await act(async () => {
+      await expect(result.current.login('otro@miyura.com', 'pass1234')).rejects.toThrow(
+        UnsyncedHoursWarningError,
+      )
+    })
+    const loginCallsFirst = vi.mocked(api).mock.calls.filter(([url]) => url === '/auth/login')
+    expect(loginCallsFirst).toHaveLength(1)
+
+    // Confirmar descarte: reutiliza la respuesta anterior sin invocar /auth/login otra vez
+    await act(async () => {
+      await result.current.confirmDiscard!()
+    })
+
+    const loginCallsSecond = vi.mocked(api).mock.calls.filter(([url]) => url === '/auth/login')
+    expect(loginCallsSecond).toHaveLength(1)
+    expect(await db.outbox.count()).toBe(0)
+    expect(localStorage.getItem('access_token')).toBe('tok-reutilizado')
+    expect(localStorage.getItem('refresh_token')).toBe('ref-reutilizado')
+    expect(result.current.user?.id).toBe(99)
+  })
+
+  it('logout previene el borrado en silencio de outbox si hay horas pendientes y no se pasa forceDiscard', async () => {
+    await db.outbox.put({
+      clientOpId: 'op-logout-warn',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
+      payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Work' },
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+    })
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-123',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+
+    await act(async () => {
+      await expect(result.current.logout()).rejects.toThrow(UnsyncedHoursWarningError)
+    })
+
+    // Las horas se preservan y la sesión continúa intacta
+    expect(await db.outbox.count()).toBe(1)
+    expect(result.current.user).not.toBeNull()
+  })
+
+  it('logout con forceDiscard: true purga Dexie, revoca el refreshToken y completa el cierre de sesión', async () => {
+    await db.outbox.put({
+      clientOpId: 'op-logout-discard',
+      entity: 'hourLog',
+      op: 'create',
+      baseVersion: null,
+      lastError: null,
+      payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Work' },
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+    })
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-123',
+      refreshToken: 'ref-123',
+      user: { id: 5, email: 'empresa0@miyura.com', fullName: 'Empresa 0', role: 'COMPANY', companyId: 1 },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+    await act(async () => {
+      await result.current.login('empresa0@miyura.com', 'yura1234')
+    })
+
+    await act(async () => {
+      await result.current.logout({ forceDiscard: true })
+    })
+
+    expect(await db.outbox.count()).toBe(0)
+    expect(api).toHaveBeenCalledWith('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken: 'ref-123' }),
+    })
+    expect(result.current.user).toBeNull()
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(localStorage.getItem('refresh_token')).toBeNull()
+  })
+
+  it('reactiva startSync al hacer login exitoso', async () => {
+    const scheduler = await import('@/offline/sync/scheduler')
+    const startSyncSpy = vi.spyOn(scheduler, 'startSync')
+
+    vi.mocked(api).mockResolvedValue({
+      accessToken: 'tok-sync',
+      user: { id: 10, email: 'user10@miyura.com', fullName: 'User 10', role: 'STUDENT', companyId: null },
+    })
+    const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+
+    await act(async () => {
+      await result.current.login('user10@miyura.com', 'pass')
+    })
+
+    expect(startSyncSpy).toHaveBeenCalled()
+    startSyncSpy.mockRestore()
   })
 })

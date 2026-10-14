@@ -328,4 +328,25 @@ describe('startSync - resiliencia y reconexión', () => {
 
     stopSync()
   })
+
+  it('startSync reinicia el ciclo de sincronización tras haber sido detenido con stopSync', async () => {
+    localStorage.setItem('access_token', 'tok')
+    mockedPull.mockResolvedValue({ applied: 0, hasMore: false })
+    mockedPush.mockResolvedValue({ applied: 0, failed: 0 })
+
+    startSync()
+    await syncNow()
+    expect(mockedPull).toHaveBeenCalled()
+
+    // Se hace logout -> stopSync
+    stopSync()
+    mockedPull.mockClear()
+
+    // El usuario se vuelve a conectar con sesión -> startSync reinicia el ciclo
+    startSync()
+    await syncNow()
+    expect(mockedPull).toHaveBeenCalled()
+
+    stopSync()
+  })
 })

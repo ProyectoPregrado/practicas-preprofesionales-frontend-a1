@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 export function LoginPage() {
-  const { login } = useAuth()
+  const { login, confirmDiscard } = useAuth()
   const navigate = useNavigate()
   
   const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null)
@@ -60,7 +60,11 @@ export function LoginPage() {
     setSubmitting(true)
     setError(null)
     try {
-      await login(email, password, { forceDiscard: true })
+      if (confirmDiscard) {
+        await confirmDiscard()
+      } else {
+        await login(email, password, { forceDiscard: true })
+      }
       setPendingUnsyncedCount(null)
       navigate('/')
     } catch (err) {

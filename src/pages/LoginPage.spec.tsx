@@ -8,6 +8,7 @@ import { UnsyncedHoursWarningError } from '@/auth/AuthContext'
 import { LoginPage } from './LoginPage'
 
 const mockLogin = vi.fn()
+const mockConfirmDiscard = vi.fn()
 const mockNavigate = vi.fn()
 
 vi.mock('@/auth/AuthContext', async (importOriginal) => {
@@ -16,6 +17,7 @@ vi.mock('@/auth/AuthContext', async (importOriginal) => {
     ...actual,
     useAuth: () => ({
       login: mockLogin,
+      confirmDiscard: mockConfirmDiscard,
       user: null,
       role: null,
       logout: vi.fn(),
@@ -158,7 +160,7 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: /descartar horas y entrar/i }))
 
     await waitFor(() => {
-      expect(mockLogin).toHaveBeenLastCalledWith('otro@miyura.com', 'pass123', { forceDiscard: true })
+      expect(mockConfirmDiscard).toHaveBeenCalledTimes(1)
       expect(mockNavigate).toHaveBeenCalledWith('/')
     })
   })
