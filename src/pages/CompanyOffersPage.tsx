@@ -378,7 +378,13 @@ export function CompanyOffersPage() {
       await refetchOffers()
       setActionState((prev) => ({ ...prev, [offerId]: 'published' }))
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'No se pudo publicar la oferta')
+      const msg =
+        err instanceof ApiError && err.statusCode === 403
+          ? 'No tienes permiso para publicar esta oferta porque no pertenece a tu empresa.'
+          : err instanceof ApiError
+            ? err.message
+            : 'No se pudo publicar la oferta'
+      setActionError(msg)
       setActionState((prev) => ({ ...prev, [offerId]: null }))
     }
   }
@@ -391,7 +397,13 @@ export function CompanyOffersPage() {
       await refetchOffers()
       setActionState((prev) => ({ ...prev, [offerId]: 'closed' }))
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'No se pudo cerrar la oferta')
+      const msg =
+        err instanceof ApiError && err.statusCode === 403
+          ? 'No tienes permiso para cerrar esta oferta porque no pertenece a tu empresa.'
+          : err instanceof ApiError
+            ? err.message
+            : 'No se pudo cerrar la oferta'
+      setActionError(msg)
       setActionState((prev) => ({ ...prev, [offerId]: null }))
     }
   }
