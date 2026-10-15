@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { HourLogForm } from './HourLogForm'
 
@@ -49,5 +49,44 @@ describe('HourLogForm — horas calculadas desde inicio y fin', () => {
     render(<HourLogForm placementId={1} />)
     fillTimes('12:00', '08:00')
     expect(hoursInput().value).toBe('')
+  })
+})
+
+function localDate(offsetDays: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + offsetDays)
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${month}-${day}`
+}
+
+describe('HourLogForm — sin fechas posteriores a hoy', () => {
+  const dateInput = () => screen.getByLabelText('Fecha') as HTMLInputElement
+
+  it('el selector de fecha no deja elegir días posteriores a hoy', () => {
+    render(<HourLogForm placementId={1} />)
+    expect(dateInput().max).toBe(localDate(0))
+  })
+
+  it('si igual llega una fecha futura, no se guarda y se explica', async () => {
+    render(<HourLogForm placementId={1} />)
+    fireEvent.change(dateInput(), { target: { value: localDate(1) } })
+    fillTimes('08:00', '12:00')
+    fireEvent.change(screen.getByLabelText('Actividad'), { target: { value: 'Prueba' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar horas' }))
+
+    await waitFor(() => expect(screen.getByText('La fecha no puede ser posterior a hoy')).toBeTruthy())
+  })
+
+  it('hoy y días anteriores no dan error de fecha', async () => {
+    render(<HourLogForm placementId={1} />)
+    fireEvent.change(dateInput(), { target: { value: localDate(-1) } })
+    fillTimes('08:00', '12:00')
+    fireEvent.change(screen.getByLabelText('Actividad'), { target: { value: 'Prueba' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar horas' }))
+
+    await waitFor(() => expect(screen.queryByText('La fecha no puede ser posterior a hoy')).toBeNull())
   })
 })
