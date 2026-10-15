@@ -12,6 +12,7 @@ import {
 } from '@/api/companies'
 import { ApiError } from '@/api/client'
 import { useAuth } from '@/auth/AuthContext'
+import { ModalitySelect } from '@/components/ModalitySelect'
 import { OfferCard, OfferGrid } from '@/components/OfferCard'
 import { PageHeader } from '@/components/PageHeader'
 import { AsyncSection, EmptyState } from '@/components/Panel'
@@ -241,12 +242,11 @@ function CreateOfferDialog({
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="offer-modality">Modalidad</Label>
-              <Input
+              <ModalitySelect
                 id="offer-modality"
                 value={form.modality}
-                onChange={(event) => onFieldChange('modality', event.target.value)}
-                placeholder="PRESENCIAL, HIBRIDA o REMOTA"
-                aria-invalid={Boolean(formErrors.modality)}
+                onChange={(value) => onFieldChange('modality', value)}
+                invalid={Boolean(formErrors.modality)}
               />
               <FieldError message={formErrors.modality} />
             </div>
