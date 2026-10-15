@@ -1,14 +1,18 @@
 import { useLiveQuery } from 'dexie-react-hooks'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { Chip } from '@/components/Chip'
 import { PageHeader } from '@/components/PageHeader'
+import { Pagination } from '@/components/Pagination'
 import { EmptyState, LoadingState, Panel, TableHeaderRow, rowClass } from '@/components/Panel'
 import { ProgressBar } from '@/components/ProgressBar'
 import { StatCard, StatGrid } from '@/components/StatCard'
 import { Button } from '@/components/ui/button'
 import { Ledger } from '@/components/ledger/Ledger'
 import { db, type LocalPlacement } from '@/offline/db'
+
+const PAGE_SIZE = 6
 
 interface StudentRow {
   placement: LocalPlacement
@@ -35,6 +39,7 @@ function ColumnHeader() {
  */
 export function MyStudentsPage() {
   const { user } = useAuth()
+  const [page, setPage] = useState(1)
 
   const rows = useLiveQuery<StudentRow[] | undefined>(async () => {
     if (!user) return undefined
@@ -56,6 +61,11 @@ export function MyStudentsPage() {
   if (rows === undefined) {
     return <LoadingState>Cargando tus practicantes…</LoadingState>
   }
+
+  // La lista es en vivo: si baja el número de páginas, no se queda en una que ya no existe.
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE))
+  const currentPage = Math.min(page, pageCount)
+  const visibleRows = rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   const waiting = rows.filter((row) => row.submittedHours > 0).length
   const pendingHours = rows.reduce((total, row) => total + row.submittedHours, 0)
@@ -101,7 +111,7 @@ export function MyStudentsPage() {
           />
         ) : (
           <Ledger header={<ColumnHeader />}>
-            {rows.map(({ placement, approvedHours, submittedHours }) => {
+            {visibleRows.map(({ placement, approvedHours, submittedHours }) => {
               const requiredHours = placement.requiredHours
               const approvedPct = requiredHours > 0 ? Math.min(100, (approvedHours / requiredHours) * 100) : 0
               return (
@@ -138,6 +148,7 @@ export function MyStudentsPage() {
             })}
           </Ledger>
         )}
+        <Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} />
       </Panel>
     </>
   )
