@@ -4,10 +4,11 @@ import type { Offer } from './offers'
 
 export interface Company {
   id: number
-  taxId: string
+  // Solo los recibe la coordinación: para el resto de los roles el backend los omite (H-6 / T-4).
+  taxId?: string
   name: string
   sector: string
-  contactEmail: string
+  contactEmail?: string
   verified: boolean
   createdAt: string
 }
