@@ -135,6 +135,9 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
 
     if (!date) {
       nextErrors.date = 'La fecha es obligatoria'
+    } else if (date > todayAsInputValue()) {
+      // El `max` del input lo evita en pantalla; esto cubre un valor pegado o escrito a mano.
+      nextErrors.date = 'La fecha no puede ser posterior a hoy'
     }
     if (!startTime) {
       nextErrors.startTime = 'La hora de inicio es obligatoria'
@@ -236,6 +239,7 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
         <Input
           id="hourlog-date"
           type="date"
+          max={todayAsInputValue()}
           value={date}
           onChange={(event) => setDate(event.target.value)}
           aria-invalid={Boolean(errors.date)}
