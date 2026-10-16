@@ -46,23 +46,18 @@ function formatDateForConfirmation(dateValue: string): string {
   }).format(parsed)
 }
 
-// Duración calculada a partir de la hora de inicio y de fin, para que el
-// estudiante pueda comparar contra lo que va a escribir en "Horas" antes de
-// guardar. Puramente informativo: no toca las horas que finalmente se
-// registran, esas siempre vienen del campo "Horas".
-function computeDurationLabel(startTime: string, endTime: string): string | null {
+// Duración en horas entre inicio y fin ("HH:mm"), con dos decimales; null si falta un dato o el
+// rango no es válido. Con ella se rellena el campo "Horas" al completar inicio y fin.
+function durationInHours(startTime: string, endTime: string): number | null {
   if (!startTime || !endTime) return null
   const [startHour, startMinute] = startTime.split(':').map(Number)
   const [endHour, endMinute] = endTime.split(':').map(Number)
   if ([startHour, startMinute, endHour, endMinute].some((value) => Number.isNaN(value))) {
     return null
   }
-  const startMinutes = startHour * 60 + startMinute
-  const endMinutes = endHour * 60 + endMinute
-  const diffMinutes = endMinutes - startMinutes
+  const diffMinutes = endHour * 60 + endMinute - (startHour * 60 + startMinute)
   if (diffMinutes <= 0) return null
-  const diffHours = diffMinutes / 60
-  return `Duración calculada: ${diffHours.toFixed(1)} h`
+  return Math.round((diffMinutes / 60) * 100) / 100
 }
 
 // D-06 (copia 3): límite de horas por registro. El DTO del backend acepta
@@ -116,8 +111,15 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   const confirmationLabel = formatDateForConfirmation(date)
-  const durationLabel = computeDurationLabel(startTime, endTime)
   const liveHoursWarning = hours ? validateHoursLive(hours, startTime, endTime) : null
+
+  // Al completar inicio y fin, "Horas" se rellena solo con la duración; sigue siendo editable.
+  function changeTimes(nextStart: string, nextEnd: string) {
+    setStartTime(nextStart)
+    setEndTime(nextEnd)
+    const duration = durationInHours(nextStart, nextEnd)
+    if (duration !== null) setHours(String(duration))
+  }
 
   function resetForm() {
     setDate(todayAsInputValue())
@@ -133,6 +135,9 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
 
     if (!date) {
       nextErrors.date = 'La fecha es obligatoria'
+    } else if (date > todayAsInputValue()) {
+      // El `max` del input lo evita en pantalla; esto cubre un valor pegado o escrito a mano.
+      nextErrors.date = 'La fecha no puede ser posterior a hoy'
     }
     if (!startTime) {
       nextErrors.startTime = 'La hora de inicio es obligatoria'
@@ -234,6 +239,7 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
         <Input
           id="hourlog-date"
           type="date"
+          max={todayAsInputValue()}
           value={date}
           onChange={(event) => setDate(event.target.value)}
           aria-invalid={Boolean(errors.date)}
@@ -257,7 +263,7 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
             id="hourlog-start"
             type="time"
             value={startTime}
-            onChange={(event) => setStartTime(event.target.value)}
+            onChange={(event) => changeTimes(event.target.value, endTime)}
             aria-invalid={Boolean(errors.startTime)}
             aria-describedby={errors.startTime ? 'hourlog-start-error' : undefined}
             className="font-data"
@@ -275,7 +281,7 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
             id="hourlog-end"
             type="time"
             value={endTime}
-            onChange={(event) => setEndTime(event.target.value)}
+            onChange={(event) => changeTimes(startTime, event.target.value)}
             aria-invalid={Boolean(errors.endTime)}
             aria-describedby={errors.endTime ? 'hourlog-end-error' : undefined}
             className="font-data"
@@ -288,17 +294,13 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
         </div>
       </div>
 
-      {durationLabel ? (
-        <p className="-mt-2 font-data text-12 text-inkSoft">{durationLabel}</p>
-      ) : null}
-
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="hourlog-hours">Horas</Label>
         <Input
           id="hourlog-hours"
           type="number"
           inputMode="decimal"
-          step="0.5"
+          step="any"
           value={hours}
           onChange={(event) => setHours(event.target.value)}
           aria-invalid={Boolean(errors.hours)}
