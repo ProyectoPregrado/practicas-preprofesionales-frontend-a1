@@ -9,6 +9,7 @@ import { LoginPage } from './LoginPage'
 
 const mockLogin = vi.fn()
 const mockConfirmDiscard = vi.fn()
+const mockCancelPendingLogin = vi.fn()
 const mockNavigate = vi.fn()
 
 vi.mock('@/auth/AuthContext', async (importOriginal) => {
@@ -18,6 +19,7 @@ vi.mock('@/auth/AuthContext', async (importOriginal) => {
     useAuth: () => ({
       login: mockLogin,
       confirmDiscard: mockConfirmDiscard,
+      cancelPendingLogin: mockCancelPendingLogin,
       user: null,
       role: null,
       logout: vi.fn(),
@@ -134,6 +136,8 @@ describe('LoginPage', () => {
     })
     expect(mockLogin).toHaveBeenCalledTimes(1)
     expect(mockNavigate).not.toHaveBeenCalled()
+    // S-1b: cancelar el aviso libera el login pendiente (revoca su refresh token).
+    expect(mockCancelPendingLogin).toHaveBeenCalledTimes(1)
   })
 
   it('permite confirmar el descarte de horas y completar el inicio de sesión', async () => {
