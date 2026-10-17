@@ -35,13 +35,13 @@ export interface LoginOptions {
 
 interface LoginResponse {
   accessToken: string
-  refreshToken?: string
+  refreshToken: string
   user: AuthUser
 }
 
 interface PendingAuth {
   accessToken: string
-  refreshToken?: string
+  refreshToken: string
   loggedUser: AuthUser
 }
 
