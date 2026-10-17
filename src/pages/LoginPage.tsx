@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 export function LoginPage() {
-  const { login, confirmDiscard } = useAuth()
+  const { login, confirmDiscard, cancelPendingLogin } = useAuth()
   const navigate = useNavigate()
   
   const [sessionExpiredMessage, setSessionExpiredMessage] = useState<string | null>(null)
@@ -53,6 +53,7 @@ export function LoginPage() {
   }
 
   function handleCancelDiscard() {
+    cancelPendingLogin?.()
     setPendingUnsyncedCount(null)
   }
 
