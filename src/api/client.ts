@@ -57,12 +57,28 @@ export class RefreshUnavailableError extends Error {
   }
 }
 
+// T-1b: el single-flight de abajo es por pestaña y el refresh token rota. Dos pestañas que renuevan a la
+// vez enviarían el mismo token: una gana y la otra recibe 401, y ese 401 cerraría una sesión válida.
+// Web Locks serializa la renovación entre pestañas.
+// shortcut: sin Web Locks (navegadores viejos) la carrera entre pestañas sigue ahí; sin alternativa barata.
+async function withRefreshLock(task: () => Promise<string | null>): Promise<string | null> {
+  return navigator.locks ? await navigator.locks.request('yura-token-refresh', task) : task()
+}
+
 async function requestRefresh(): Promise<string | null> {
-  const refreshToken = localStorage.getItem('refresh_token')
-  if (!refreshToken) {
+  const staleToken = localStorage.getItem('refresh_token')
+  if (!staleToken) {
     return null
   }
+  return withRefreshLock(async () => {
+    // Mientras esperaba el candado, otra pestaña pudo renovar (token distinto) o cerrar la sesión (sin token).
+    const current = localStorage.getItem('refresh_token')
+    if (current === staleToken) return renewWith(staleToken)
+    return current ? localStorage.getItem('access_token') : null
+  })
+}
 
+async function renewWith(refreshToken: string): Promise<string | null> {
   let res: Response
   try {
     res = await fetch(`${API_URL}/auth/refresh`, {
