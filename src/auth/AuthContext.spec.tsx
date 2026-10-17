@@ -365,6 +365,87 @@ describe('AuthProvider', () => {
     expect(localStorage.getItem('last_user_id')).toBe('5')
   })
 
+  // S-1b: el aviso guarda la respuesta del login (con su refresh token vivo) sin abrir sesión.
+  // Si el usuario no confirma, ese token no puede quedar sin revocar en el servidor.
+  describe('login pendiente de confirmar (S-1b)', () => {
+    async function leavePendingLogin() {
+      await db.outbox.put({
+        clientOpId: 'op-user5',
+        entity: 'hourLog',
+        op: 'create',
+        baseVersion: null,
+        lastError: null,
+        payload: { placementId: 1, date: '2026-01-01', hours: 4, activity: 'Student 5 work' },
+        createdAt: new Date().toISOString(),
+        attempts: 0,
+      })
+      localStorage.setItem('last_user_id', '5')
+      vi.mocked(api).mockResolvedValue({
+        accessToken: 'tok-99',
+        refreshToken: 'ref-99',
+        user: { id: 99, email: 'otro@miyura.com', fullName: 'Usuario 99', role: 'STUDENT', companyId: null },
+      })
+      const hook = renderHook(() => useAuth(), { wrapper: withProvider })
+      await act(async () => {
+        await expect(hook.result.current.login('otro@miyura.com', 'pass1234')).rejects.toThrow(UnsyncedHoursWarningError)
+      })
+      vi.mocked(api).mockClear()
+      return hook
+    }
+
+    const revocations = () => vi.mocked(api).mock.calls.filter(([path]) => path === '/auth/logout')
+
+    it('cancelPendingLogin revoca el refresh token guardado y no abre sesión', async () => {
+      const { result } = await leavePendingLogin()
+
+      await act(async () => {
+        result.current.cancelPendingLogin?.()
+      })
+
+      expect(revocations()).toHaveLength(1)
+      expect(JSON.parse(String(revocations()[0][1]?.body))).toEqual({ refreshToken: 'ref-99' })
+      expect(result.current.user).toBeNull()
+      expect(localStorage.getItem('refresh_token')).toBeNull()
+      expect(await db.outbox.count()).toBe(1)
+    })
+
+    it('cancelPendingLogin es idempotente: sin login pendiente no llama al servidor', async () => {
+      const { result } = renderHook(() => useAuth(), { wrapper: withProvider })
+
+      await act(async () => {
+        result.current.cancelPendingLogin?.()
+      })
+
+      expect(revocations()).toHaveLength(0)
+    })
+
+    it('un login con otras credenciales revoca el pendiente en vez de dejarlo huérfano', async () => {
+      const { result } = await leavePendingLogin()
+      vi.mocked(api).mockResolvedValue({
+        accessToken: 'tok-5',
+        refreshToken: 'ref-5',
+        user: { id: 5, email: 'primero@miyura.com', fullName: 'Usuario 5', role: 'STUDENT', companyId: null },
+      })
+
+      await act(async () => {
+        await result.current.login('primero@miyura.com', 'pass1234')
+      })
+
+      expect(revocations().map(([, init]) => JSON.parse(String(init?.body)))).toEqual([{ refreshToken: 'ref-99' }])
+    })
+
+    it('confirmar el descarte reutiliza el token pendiente y no lo revoca', async () => {
+      const { result } = await leavePendingLogin()
+
+      await act(async () => {
+        await result.current.confirmDiscard?.()
+      })
+
+      expect(revocations()).toHaveLength(0)
+      expect(localStorage.getItem('refresh_token')).toBe('ref-99')
+    })
+  })
+
   it('wipes Dexie data in a single transaction if a DIFFERENT user logs in with forceDiscard: true', async () => {
     await db.outbox.put({
       clientOpId: 'op-user5',
