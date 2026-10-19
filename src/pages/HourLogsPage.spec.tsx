@@ -125,6 +125,21 @@ describe('HourLogsPage', () => {
       expect(screen.getByText('Actividad 500')).toBeInTheDocument()
     })
 
+    // Los hooks deben llamarse en el mismo orden en cada render: la pantalla empieza cargando
+    // (usePlacement devuelve undefined) y después muestra la plaza y los registros.
+    it('pasa de cargando a cargado sin romper el orden de los hooks', () => {
+      vi.mocked(placementHooks.usePlacement).mockReturnValue(undefined)
+      vi.mocked(hourLogsHooks.useHourLogs).mockReturnValue(undefined)
+      const { rerender } = render(<HourLogsPage />)
+      expect(screen.getByText(/Cargando tu práctica/)).toBeInTheDocument()
+
+      vi.mocked(placementHooks.usePlacement).mockReturnValue(mockPlacement)
+      vi.mocked(hourLogsHooks.useHourLogs).mockReturnValue(createMockLogs(12))
+      rerender(<HourLogsPage />)
+
+      expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
+    })
+
     it('no muestra controles de paginación si hay 10 o menos registros', () => {
       vi.mocked(placementHooks.usePlacement).mockReturnValue(mockPlacement)
       const logs8 = createMockLogs(8)

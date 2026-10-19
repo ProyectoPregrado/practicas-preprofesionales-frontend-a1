@@ -119,6 +119,8 @@ export function HourLogsPage() {
   const placement = usePlacement()
   const logs = useHourLogs(placement?.id ?? -1)
   const [page, setPage] = useState(1)
+  // Antes de los return tempranos: los hooks se llaman siempre en el mismo orden (mientras carga, logs es undefined).
+  const sortedLogs = useMemo(() => (logs ? logs.slice().reverse() : []), [logs])
 
   if (placement === undefined) {
     return <LoadingState>Cargando tu práctica…</LoadingState>
@@ -142,7 +144,6 @@ export function HourLogsPage() {
   const hours = summarizeHours(logs, placement.requiredHours)
 
   // Paginación con límite de 10 registros por página para mantener fluidez con 500+ registros
-  const sortedLogs = useMemo(() => logs.slice().reverse(), [logs])
   const pageCount = Math.max(1, Math.ceil(sortedLogs.length / PAGE_SIZE))
   const currentPage = Math.min(page, pageCount)
   const visibleLogs = sortedLogs.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
