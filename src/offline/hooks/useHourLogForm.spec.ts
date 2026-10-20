@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as hourLogPersistence from '@/lib/hourLogPersistence'
 import { db, type LocalHourLog } from '@/offline/db'
 import { useHourLogForm } from './useHourLogForm'
 
@@ -9,6 +10,7 @@ describe('useHourLogForm (E6-04)', () => {
   beforeEach(async () => {
     await db.delete()
     await db.open()
+    vi.restoreAllMocks()
   })
 
   it('inicializa con valores por defecto', () => {
@@ -24,7 +26,7 @@ describe('useHourLogForm (E6-04)', () => {
     expect(result.current.submitError).toBeNull()
   })
 
-  it('calcula y auto-rellena las horas al cambiar tiempos de inicio y fin', () => {
+  it('calcula y auto-rellena las horas al cambiar tiempos de inicio y fin válidos', () => {
     const { result } = renderHook(() => useHourLogForm({ placementId }))
 
     act(() => {
@@ -34,6 +36,26 @@ describe('useHourLogForm (E6-04)', () => {
     expect(result.current.startTime).toBe('08:00')
     expect(result.current.endTime).toBe('12:30')
     expect(result.current.hours).toBe('4.5')
+  })
+
+  it('no modifica las horas si el rango horario es inválido o incompleto', () => {
+    const { result } = renderHook(() => useHourLogForm({ placementId }))
+
+    act(() => {
+      result.current.setHours('3')
+    })
+
+    act(() => {
+      // Rango inválido (fin <= inicio)
+      result.current.changeTimes('12:00', '08:00')
+    })
+    expect(result.current.hours).toBe('3')
+
+    act(() => {
+      // Horario incompleto
+      result.current.changeTimes('', '10:00')
+    })
+    expect(result.current.hours).toBe('3')
   })
 
   it('valida campos obligatorios al enviar formulario vacío', async () => {
@@ -47,6 +69,25 @@ describe('useHourLogForm (E6-04)', () => {
 
     expect(result.current.errors.startTime).toBe('La hora de inicio es obligatoria')
     expect(result.current.errors.endTime).toBe('La hora de fin es obligatoria')
+    expect(result.current.errors.activity).toBe('Describe la actividad realizada')
+  })
+
+  it('rechaza el envío si la actividad tiene solo espacios en blanco', async () => {
+    const onSaved = vi.fn()
+    const { result } = renderHook(() => useHourLogForm({ placementId, onSaved }))
+
+    act(() => {
+      result.current.setDate('2026-10-20')
+      result.current.changeTimes('08:00', '12:00')
+      result.current.setActivity('     ')
+    })
+
+    const fakeEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>
+    await act(async () => {
+      await result.current.handleSubmit(fakeEvent)
+    })
+
+    expect(onSaved).not.toHaveBeenCalled()
     expect(result.current.errors.activity).toBe('Describe la actividad realizada')
   })
 
@@ -119,5 +160,47 @@ describe('useHourLogForm (E6-04)', () => {
 
     expect(onSaved).not.toHaveBeenCalled()
     expect(result.current.errors.hours).toContain('No puedes registrar más de 8 horas en un mismo día')
+  })
+
+  it('muestra submitError si ocurre DAILY_LIMIT_EXCEEDED en la transacción (ej. carrera entre pestañas)', async () => {
+    vi.spyOn(hourLogPersistence, 'persistHourLog').mockRejectedValueOnce(new Error('DAILY_LIMIT_EXCEEDED'))
+    const onSaved = vi.fn()
+    const { result } = renderHook(() => useHourLogForm({ placementId, onSaved }))
+
+    act(() => {
+      result.current.setDate('2026-10-20')
+      result.current.changeTimes('08:00', '12:00')
+      result.current.setActivity('Turno concurrente')
+    })
+
+    const fakeEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>
+    await act(async () => {
+      await result.current.handleSubmit(fakeEvent)
+    })
+
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(result.current.submitError).toBe('No se puede guardar: superaría el límite de 8 horas por día.')
+    expect(result.current.submitting).toBe(false)
+  })
+
+  it('muestra mensaje genérico ante fallos inesperados de almacenamiento local', async () => {
+    vi.spyOn(hourLogPersistence, 'persistHourLog').mockRejectedValueOnce(new Error('IndexedDB storage failure'))
+    const onSaved = vi.fn()
+    const { result } = renderHook(() => useHourLogForm({ placementId, onSaved }))
+
+    act(() => {
+      result.current.setDate('2026-10-20')
+      result.current.changeTimes('08:00', '12:00')
+      result.current.setActivity('Fallo inesperado')
+    })
+
+    const fakeEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent<HTMLFormElement>
+    await act(async () => {
+      await result.current.handleSubmit(fakeEvent)
+    })
+
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(result.current.submitError).toBe('No se pudo guardar el registro en este dispositivo. Intenta de nuevo.')
+    expect(result.current.submitting).toBe(false)
   })
 })

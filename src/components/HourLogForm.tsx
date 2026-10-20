@@ -1,10 +1,12 @@
 import { Button } from '@/components/ui/button'
 import {
-  ActivityField,
   DateField,
-  HoursField,
   TimeRangeFields,
-} from '@/components/hour-log/FormFields'
+} from '@/components/hour-log/DateTimeFields'
+import {
+  ActivityField,
+  HoursField,
+} from '@/components/hour-log/HoursActivityFields'
 import { todayAsInputValue } from '@/lib/hourLogHelpers'
 import { useHourLogForm } from '@/offline/hooks/useHourLogForm'
 

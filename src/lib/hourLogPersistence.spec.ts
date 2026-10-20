@@ -10,7 +10,7 @@ describe('hourLogPersistence (E6-04)', () => {
     await db.open()
   })
 
-  it('guarda el registro localmente y encola en outbox de forma atómica', async () => {
+  it('guarda el registro localmente y encola en outbox con la estructura exacta requerida', async () => {
     const row = await persistHourLog({
       placementId,
       date: '2026-10-20',
@@ -23,14 +23,51 @@ describe('hourLogPersistence (E6-04)', () => {
 
     expect(row.id).toBeLessThan(0)
     expect(row.syncState).toBe('local')
+    expect(row.status).toBe('SUBMITTED')
+    expect(row.version).toBe(1)
+    expect(row.hours).toBe(4)
 
     const dbRows = await db.hourLogs.where('placementId').equals(placementId).toArray()
     expect(dbRows).toHaveLength(1)
+    expect(dbRows[0].status).toBe('SUBMITTED')
     expect(dbRows[0].hours).toBe(4)
 
     const outboxRows = await db.outbox.toArray()
     expect(outboxRows).toHaveLength(1)
     expect(outboxRows[0].entity).toBe('hourLog')
+    expect(outboxRows[0].op).toBe('create')
+    expect(outboxRows[0].baseVersion).toBeNull()
+
+    const payload = outboxRows[0].payload as unknown as LocalHourLog
+    expect(payload.id).toBe(row.id)
+    expect(payload.placementId).toBe(placementId)
+    expect(payload.status).toBe('SUBMITTED')
+    expect(payload.version).toBe(1)
+    expect(payload.reviewNote).toBeNull()
+    expect(payload.activity).toBe('Persistencia separada')
+    expect(payload.hours).toBe(4)
+  })
+
+  it('guarda y encola la actividad aplicando trim() a los espacios en blanco circundantes', async () => {
+    const row = await persistHourLog({
+      placementId,
+      date: '2026-10-20',
+      targetKey: '2026-10-20',
+      startTime: '09:00',
+      endTime: '12:00',
+      hours: 3,
+      activity: '   espacios al inicio y al final   ',
+    })
+
+    expect(row.activity).toBe('espacios al inicio y al final')
+
+    const dbRow = await db.hourLogs.get(row.id)
+    expect(dbRow?.activity).toBe('espacios al inicio y al final')
+
+    const outboxRows = await db.outbox.toArray()
+    expect(outboxRows).toHaveLength(1)
+    const payload = outboxRows[0].payload as unknown as LocalHourLog
+    expect(payload.activity).toBe('espacios al inicio y al final')
   })
 
   it('lanza DAILY_LIMIT_EXCEEDED y no guarda nada si se supera el tope diario en la transacción', async () => {

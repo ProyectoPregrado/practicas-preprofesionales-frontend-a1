@@ -25,7 +25,7 @@ export async function persistHourLog(params: PersistHourLogParams): Promise<Loca
     startTime: params.startTime,
     endTime: params.endTime,
     hours: params.hours,
-    activity: params.activity,
+    activity: params.activity.trim(),
     status: 'SUBMITTED',
     reviewNote: null,
     version: 1,

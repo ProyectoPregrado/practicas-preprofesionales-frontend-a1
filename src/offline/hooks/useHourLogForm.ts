@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
+import { buildFormErrors, type FormErrors } from '@/lib/hourLogErrors'
 import {
   durationInHours,
   formatDateForConfirmation,
@@ -15,50 +16,11 @@ import {
 } from '@/lib/hourRules'
 import { db } from '@/offline/db'
 
-export interface FormErrors {
-  date?: string
-  startTime?: string
-  endTime?: string
-  hours?: string
-  activity?: string
-}
+export type { FormErrors }
 
 export interface UseHourLogFormOptions {
   placementId: number
   onSaved?: () => void
-}
-
-export function buildFormErrors(
-  date: string,
-  startTime: string,
-  endTime: string,
-  hours: string,
-  activity: string,
-  currentAlready: number,
-): FormErrors {
-  const nextErrors: FormErrors = {}
-
-  if (!date) {
-    nextErrors.date = 'La fecha es obligatoria'
-  } else if (date > todayAsInputValue()) {
-    nextErrors.date = 'La fecha no puede ser posterior a hoy'
-  }
-  if (!startTime) {
-    nextErrors.startTime = 'La hora de inicio es obligatoria'
-  }
-  if (!endTime) {
-    nextErrors.endTime = 'La hora de fin es obligatoria'
-  }
-  if (!activity.trim()) {
-    nextErrors.activity = 'Describe la actividad realizada'
-  }
-
-  const hoursMessage = validateHourEntry(hours, startTime, endTime, currentAlready, date)
-  if (hoursMessage) {
-    nextErrors.hours = hoursMessage
-  }
-
-  return nextErrors
 }
 
 export function useHourLogForm({ placementId, onSaved }: UseHourLogFormOptions) {
@@ -124,7 +86,7 @@ export function useHourLogForm({ placementId, onSaved }: UseHourLogFormOptions) 
         startTime,
         endTime,
         hours: Number(hours),
-        activity: activity.trim(),
+        activity,
       })
       resetForm()
       onSaved?.()
