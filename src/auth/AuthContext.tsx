@@ -191,7 +191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (refreshToken) {
       // La revocación en el servidor es de mejor esfuerzo y no bloquea el cierre local: sin conexión
       // el refresh token queda vivo hasta que expire, pero el usuario no se queda esperando.
-      void api('/auth/logout', {
+      api('/auth/logout', {
         method: 'POST',
         body: JSON.stringify({ refreshToken }),
       }).catch(() => undefined)

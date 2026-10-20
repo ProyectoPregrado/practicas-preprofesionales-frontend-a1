@@ -370,6 +370,26 @@ export function CompanyOffersPage() {
 
   const myCompany = companies?.find((company) => company.id === user?.companyId)
 
+function getPublishErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.statusCode === 403) {
+    return 'No tienes permiso para publicar esta oferta porque no pertenece a tu empresa.'
+  }
+  if (err instanceof ApiError) {
+    return err.message
+  }
+  return 'No se pudo publicar la oferta'
+}
+
+function getCloseErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.statusCode === 403) {
+    return 'No tienes permiso para cerrar esta oferta porque no pertenece a tu empresa.'
+  }
+  if (err instanceof ApiError) {
+    return err.message
+  }
+  return 'No se pudo cerrar la oferta'
+}
+
   async function handlePublish(offerId: number) {
     setActionError(null)
     setActionState((prev) => ({ ...prev, [offerId]: 'publishing' }))
@@ -378,13 +398,7 @@ export function CompanyOffersPage() {
       await refetchOffers()
       setActionState((prev) => ({ ...prev, [offerId]: 'published' }))
     } catch (err) {
-      const msg =
-        err instanceof ApiError && err.statusCode === 403
-          ? 'No tienes permiso para publicar esta oferta porque no pertenece a tu empresa.'
-          : err instanceof ApiError
-            ? err.message
-            : 'No se pudo publicar la oferta'
-      setActionError(msg)
+      setActionError(getPublishErrorMessage(err))
       setActionState((prev) => ({ ...prev, [offerId]: null }))
     }
   }
@@ -397,13 +411,7 @@ export function CompanyOffersPage() {
       await refetchOffers()
       setActionState((prev) => ({ ...prev, [offerId]: 'closed' }))
     } catch (err) {
-      const msg =
-        err instanceof ApiError && err.statusCode === 403
-          ? 'No tienes permiso para cerrar esta oferta porque no pertenece a tu empresa.'
-          : err instanceof ApiError
-            ? err.message
-            : 'No se pudo cerrar la oferta'
-      setActionError(msg)
+      setActionError(getCloseErrorMessage(err))
       setActionState((prev) => ({ ...prev, [offerId]: null }))
     }
   }
