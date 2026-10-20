@@ -1,9 +1,17 @@
 import { type FormEvent, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
+import {
+  ActivityField,
+  DateField,
+  HoursField,
+  TimeRangeFields,
+} from '@/components/hour-log/FormFields'
+import {
+  durationInHours,
+  formatDateForConfirmation,
+  todayAsInputValue,
+} from '@/lib/hourLogHelpers'
 import {
   MAX_HOURS_PER_DAY,
   getDailyRegisteredHours,
@@ -27,45 +35,100 @@ interface FormErrors {
   activity?: string
 }
 
-// Fecha de hoy en formato YYYY-MM-DD, tal como la espera un <input type="date">.
-function todayAsInputValue(): string {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
+function buildErrors(
+  date: string,
+  startTime: string,
+  endTime: string,
+  hours: string,
+  activity: string,
+  currentAlready: number,
+): FormErrors {
+  const nextErrors: FormErrors = {}
 
-// Convierte la fecha elegida (YYYY-MM-DD) a una etiqueta legible en español
-// para que el estudiante confirme, de un vistazo, qué día está registrando
-// antes de guardar. Se recalcula en cada render: no hay useMemo aquí porque
-// es una operación barata y el formulario no necesita esa complejidad.
-function formatDateForConfirmation(dateValue: string): string {
-  if (!dateValue) return ''
-  const [year, month, day] = dateValue.split('-').map(Number)
-  if (!year || !month || !day) return ''
-  const parsed = new Date(year, month - 1, day)
-  if (Number.isNaN(parsed.getTime())) return ''
-  return new Intl.DateTimeFormat('es-EC', {
-    weekday: 'long',
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  }).format(parsed)
-}
-
-// Duración en horas entre inicio y fin ("HH:mm"), con dos decimales; null si falta un dato o el
-// rango no es válido. Con ella se rellena el campo "Horas" al completar inicio y fin.
-function durationInHours(startTime: string, endTime: string): number | null {
-  if (!startTime || !endTime) return null
-  const [startHour, startMinute] = startTime.split(':').map(Number)
-  const [endHour, endMinute] = endTime.split(':').map(Number)
-  if ([startHour, startMinute, endHour, endMinute].some((value) => Number.isNaN(value))) {
-    return null
+  if (!date) {
+    nextErrors.date = 'La fecha es obligatoria'
+  } else if (date > todayAsInputValue()) {
+    nextErrors.date = 'La fecha no puede ser posterior a hoy'
   }
-  const diffMinutes = endHour * 60 + endMinute - (startHour * 60 + startMinute)
-  if (diffMinutes <= 0) return null
-  return Math.round((diffMinutes / 60) * 100) / 100
+  if (!startTime) {
+    nextErrors.startTime = 'La hora de inicio es obligatoria'
+  }
+  if (!endTime) {
+    nextErrors.endTime = 'La hora de fin es obligatoria'
+  }
+  if (!activity.trim()) {
+    nextErrors.activity = 'Describe la actividad realizada'
+  }
+
+  const hoursMessage = validateHourEntry(hours, startTime, endTime, currentAlready, date)
+  if (hoursMessage) {
+    nextErrors.hours = hoursMessage
+  }
+
+  return nextErrors
+}
+
+async function persistHourLog(
+  placementId: number,
+  date: string,
+  targetKey: string,
+  startTime: string,
+  endTime: string,
+  hours: string,
+  activity: string,
+): Promise<void> {
+  const localId = -Date.now()
+  const nowIso = new Date().toISOString()
+  const hoursValue = Number(hours)
+  const trimmedActivity = activity.trim()
+
+  const row: LocalHourLog = {
+    id: localId,
+    placementId,
+    date,
+    startTime,
+    endTime,
+    hours: hoursValue,
+    activity: trimmedActivity,
+    status: 'SUBMITTED',
+    reviewNote: null,
+    version: 1,
+    updatedAt: nowIso,
+    syncState: 'local',
+  }
+
+  await db.transaction('rw', [db.hourLogs, db.outbox], async () => {
+    const txExisting = await db.hourLogs
+      .where('placementId')
+      .equals(placementId)
+      .and((l) => isSameDay(l.date, targetKey) && l.status !== 'REJECTED')
+      .toArray()
+    const txAlready = txExisting.reduce((acc, l) => acc + (Number(l.hours) || 0), 0)
+    if (txAlready + hoursValue > MAX_HOURS_PER_DAY) {
+      throw new Error('DAILY_LIMIT_EXCEEDED')
+    }
+
+    await db.hourLogs.add(row)
+
+    await enqueue({
+      entity: 'hourLog',
+      op: 'create',
+      payload: {
+        id: row.id,
+        placementId: row.placementId,
+        date: row.date,
+        startTime: row.startTime,
+        endTime: row.endTime,
+        hours: row.hours,
+        activity: row.activity,
+        status: row.status,
+        reviewNote: row.reviewNote,
+        version: row.version,
+        updatedAt: row.updatedAt,
+      },
+      baseVersion: null,
+    })
+  })
 }
 
 export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
@@ -95,7 +158,6 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
   const confirmationLabel = formatDateForConfirmation(date)
   const liveHoursWarning = hours ? validateHourEntry(hours, startTime, endTime, alreadyHours, date) : null
 
-  // Al completar inicio y fin, "Horas" se rellena solo con la duración; sigue siendo editable.
   function changeTimes(nextStart: string, nextEnd: string) {
     setStartTime(nextStart)
     setEndTime(nextEnd)
@@ -112,110 +174,20 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
     setErrors({})
   }
 
-  function buildErrors(currentAlready: number): FormErrors {
-    const nextErrors: FormErrors = {}
-
-    if (!date) {
-      nextErrors.date = 'La fecha es obligatoria'
-    } else if (date > todayAsInputValue()) {
-      // El `max` del input lo evita en pantalla; esto cubre un valor pegado o escrito a mano.
-      nextErrors.date = 'La fecha no puede ser posterior a hoy'
-    }
-    if (!startTime) {
-      nextErrors.startTime = 'La hora de inicio es obligatoria'
-    }
-    if (!endTime) {
-      nextErrors.endTime = 'La hora de fin es obligatoria'
-    }
-    if (!activity.trim()) {
-      nextErrors.activity = 'Describe la actividad realizada'
-    }
-
-    const hoursMessage = validateHourEntry(hours, startTime, endTime, currentAlready, date)
-    if (hoursMessage) {
-      nextErrors.hours = hoursMessage
-    }
-
-    return nextErrors
-  }
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSubmitError(null)
 
     const currentAlready = await getDailyRegisteredHours(placementId, date)
-    const nextErrors = buildErrors(currentAlready)
+    const nextErrors = buildErrors(date, startTime, endTime, hours, activity, currentAlready)
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) {
       return
     }
 
     setSubmitting(true)
-
-    // Id local temporal: negativo para no chocar jamás con un id real del
-    // servidor (que siempre es positivo). Cuando el servidor confirme el
-    // registro, applyResults lo reemplaza; hasta entonces vive solo aquí,
-    // en este dispositivo, y la UI nunca lo muestra tal cual.
-    const localId = -Date.now()
-    const nowIso = new Date().toISOString()
-    const hoursValue = Number(hours)
-    const trimmedActivity = activity.trim()
-
-    const row: LocalHourLog = {
-      id: localId,
-      placementId,
-      date,
-      startTime,
-      endTime,
-      hours: hoursValue,
-      activity: trimmedActivity,
-      status: 'SUBMITTED',
-      reviewNote: null,
-      version: 1,
-      updatedAt: nowIso,
-      syncState: 'local',
-    }
-
     try {
-      // Misma transacción para las dos escrituras: si enqueue() falla, la
-      // fila no queda huérfana en 'local' sin que el usuario se entere.
-      await db.transaction('rw', [db.hourLogs, db.outbox], async () => {
-        const txExisting = await db.hourLogs
-          .where('placementId')
-          .equals(placementId)
-          .and((l) => isSameDay(l.date, targetKey) && l.status !== 'REJECTED')
-          .toArray()
-        const txAlready = txExisting.reduce((acc, l) => acc + (Number(l.hours) || 0), 0)
-        if (txAlready + hoursValue > MAX_HOURS_PER_DAY) {
-          throw new Error('DAILY_LIMIT_EXCEEDED')
-        }
-
-        // 1) Escribe local primero: esto es lo único que hace falta para que
-        // el registro sobreviva a un refresh sin red — no depende de fetch.
-        await db.hourLogs.add(row)
-
-        // 2) Encola la operación para cuando haya conexión. enqueue() marca
-        // la fila como 'queued' apenas se agrega a la cola de salida.
-        await enqueue({
-          entity: 'hourLog',
-          op: 'create',
-          payload: {
-            id: row.id,
-            placementId: row.placementId,
-            date: row.date,
-            startTime: row.startTime,
-            endTime: row.endTime,
-            hours: row.hours,
-            activity: row.activity,
-            status: row.status,
-            reviewNote: row.reviewNote,
-            version: row.version,
-            updatedAt: row.updatedAt,
-          },
-          baseVersion: null,
-        })
-      })
-
+      await persistHourLog(placementId, date, targetKey, startTime, endTime, hours, activity)
       resetForm()
       onSaved?.()
     } catch (err) {
@@ -231,106 +203,35 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
 
   return (
     <form className="flex flex-col gap-4" onSubmit={handleSubmit} noValidate>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="hourlog-date">Fecha</Label>
-        <Input
-          id="hourlog-date"
-          type="date"
-          max={todayAsInputValue()}
-          value={date}
-          onChange={(event) => setDate(event.target.value)}
-          aria-invalid={Boolean(errors.date)}
-          aria-describedby={errors.date ? 'hourlog-date-error' : undefined}
-          className="font-data"
-        />
-        {confirmationLabel ? (
-          <p className="font-data text-12 text-inkSoft">{confirmationLabel}</p>
-        ) : null}
-        {errors.date ? (
-          <p id="hourlog-date-error" role="alert" className="text-12 text-void">
-            {errors.date}
-          </p>
-        ) : null}
-      </div>
+      <DateField
+        value={date}
+        maxValue={todayAsInputValue()}
+        confirmationLabel={confirmationLabel}
+        error={errors.date}
+        onChange={(e) => setDate(e.target.value)}
+      />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="hourlog-start">Hora de inicio</Label>
-          <Input
-            id="hourlog-start"
-            type="time"
-            value={startTime}
-            onChange={(event) => changeTimes(event.target.value, endTime)}
-            aria-invalid={Boolean(errors.startTime)}
-            aria-describedby={errors.startTime ? 'hourlog-start-error' : undefined}
-            className="font-data"
-          />
-          {errors.startTime ? (
-            <p id="hourlog-start-error" role="alert" className="text-12 text-void">
-              {errors.startTime}
-            </p>
-          ) : null}
-        </div>
+      <TimeRangeFields
+        startTime={startTime}
+        endTime={endTime}
+        startError={errors.startTime}
+        endError={errors.endTime}
+        onStartChange={(start) => changeTimes(start, endTime)}
+        onEndChange={(end) => changeTimes(startTime, end)}
+      />
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="hourlog-end">Hora de fin</Label>
-          <Input
-            id="hourlog-end"
-            type="time"
-            value={endTime}
-            onChange={(event) => changeTimes(startTime, event.target.value)}
-            aria-invalid={Boolean(errors.endTime)}
-            aria-describedby={errors.endTime ? 'hourlog-end-error' : undefined}
-            className="font-data"
-          />
-          {errors.endTime ? (
-            <p id="hourlog-end-error" role="alert" className="text-12 text-void">
-              {errors.endTime}
-            </p>
-          ) : null}
-        </div>
-      </div>
+      <HoursField
+        value={hours}
+        liveWarning={liveHoursWarning}
+        error={errors.hours}
+        onChange={(e) => setHours(e.target.value)}
+      />
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="hourlog-hours">Horas</Label>
-        <Input
-          id="hourlog-hours"
-          type="number"
-          inputMode="decimal"
-          step="any"
-          value={hours}
-          onChange={(event) => setHours(event.target.value)}
-          aria-invalid={Boolean(errors.hours)}
-          aria-describedby={errors.hours ? 'hourlog-hours-error' : undefined}
-          className="font-data tabular-nums"
-        />
-        {liveHoursWarning && !errors.hours ? (
-          <p className="text-12 text-pending">{liveHoursWarning}</p>
-        ) : null}
-        {errors.hours ? (
-          <p id="hourlog-hours-error" role="alert" className="text-12 text-void">
-            {errors.hours}
-          </p>
-        ) : null}
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="hourlog-activity">Actividad</Label>
-        <Textarea
-          id="hourlog-activity"
-          value={activity}
-          onChange={(event) => setActivity(event.target.value)}
-          aria-invalid={Boolean(errors.activity)}
-          aria-describedby={errors.activity ? 'hourlog-activity-error' : undefined}
-          rows={3}
-          placeholder="Qué hiciste durante este bloque de horas"
-        />
-        {errors.activity ? (
-          <p id="hourlog-activity-error" role="alert" className="text-12 text-void">
-            {errors.activity}
-          </p>
-        ) : null}
-      </div>
+      <ActivityField
+        value={activity}
+        error={errors.activity}
+        onChange={(e) => setActivity(e.target.value)}
+      />
 
       {submitError ? (
         <p role="alert" className="text-14 text-void">
