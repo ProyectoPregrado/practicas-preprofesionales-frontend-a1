@@ -1,8 +1,16 @@
 import { type FormEvent, useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  MAX_HOURS_PER_DAY,
+  getDailyRegisteredHours,
+  isSameDay,
+  normalizeDateKey,
+  validateHourEntry,
+} from '@/lib/hourRules'
 import { db, type LocalHourLog } from '@/offline/db'
 import { enqueue } from '@/offline/sync/push'
 
@@ -60,46 +68,6 @@ function durationInHours(startTime: string, endTime: string): number | null {
   return Math.round((diffMinutes / 60) * 100) / 100
 }
 
-// D-06 (copia 3): límite de horas por registro. El DTO del backend acepta
-// hasta 12 horas y su propio servicio corta en 10; aquí, en el formulario,
-// el tope es 8. Los tres umbrales divergen a propósito y no se unifican.
-function validateHoursOnSubmit(hours: string, startTime: string, endTime: string): string | null {
-  const hoursValue = Number(hours)
-  if (!hours || Number.isNaN(hoursValue)) {
-    return 'Ingresa un número de horas válido'
-  }
-  if (hoursValue <= 0) {
-    return 'Las horas deben ser mayores a 0'
-  }
-  if (hoursValue > 8) {
-    return 'No puedes registrar más de 8 horas en un mismo día'
-  }
-  if (startTime && endTime && endTime <= startTime) {
-    return 'La hora de fin debe ser posterior a la de inicio'
-  }
-  return null
-}
-
-// Mismo chequeo que arriba, copiado (no reutilizado) para el aviso que se
-// muestra en vivo bajo el campo Horas mientras el estudiante escribe, antes
-// de siquiera intentar guardar.
-function validateHoursLive(hours: string, startTime: string, endTime: string): string | null {
-  const hoursValue = Number(hours)
-  if (!hours || Number.isNaN(hoursValue)) {
-    return 'Ingresa un número de horas válido'
-  }
-  if (hoursValue <= 0) {
-    return 'Las horas deben ser mayores a 0'
-  }
-  if (hoursValue > 8) {
-    return 'No puedes registrar más de 8 horas en un mismo día'
-  }
-  if (startTime && endTime && endTime <= startTime) {
-    return 'La hora de fin debe ser posterior a la de inicio'
-  }
-  return null
-}
-
 export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
   const [date, setDate] = useState(todayAsInputValue())
   const [startTime, setStartTime] = useState('')
@@ -110,8 +78,22 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
+  const targetKey = normalizeDateKey(date)
+  const existingLogs = useLiveQuery(
+    () =>
+      targetKey
+        ? db.hourLogs
+            .where('placementId')
+            .equals(placementId)
+            .and((log) => isSameDay(log.date, targetKey) && log.status !== 'REJECTED')
+            .toArray()
+        : [],
+    [placementId, targetKey],
+  )
+  const alreadyHours = (existingLogs ?? []).reduce((sum, log) => sum + (Number(log.hours) || 0), 0)
+
   const confirmationLabel = formatDateForConfirmation(date)
-  const liveHoursWarning = hours ? validateHoursLive(hours, startTime, endTime) : null
+  const liveHoursWarning = hours ? validateHourEntry(hours, startTime, endTime, alreadyHours, date) : null
 
   // Al completar inicio y fin, "Horas" se rellena solo con la duración; sigue siendo editable.
   function changeTimes(nextStart: string, nextEnd: string) {
@@ -130,7 +112,7 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
     setErrors({})
   }
 
-  function buildErrors(): FormErrors {
+  function buildErrors(currentAlready: number): FormErrors {
     const nextErrors: FormErrors = {}
 
     if (!date) {
@@ -149,7 +131,7 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
       nextErrors.activity = 'Describe la actividad realizada'
     }
 
-    const hoursMessage = validateHoursOnSubmit(hours, startTime, endTime)
+    const hoursMessage = validateHourEntry(hours, startTime, endTime, currentAlready, date)
     if (hoursMessage) {
       nextErrors.hours = hoursMessage
     }
@@ -161,7 +143,8 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
     event.preventDefault()
     setSubmitError(null)
 
-    const nextErrors = buildErrors()
+    const currentAlready = await getDailyRegisteredHours(placementId, date)
+    const nextErrors = buildErrors(currentAlready)
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) {
       return
@@ -197,6 +180,16 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
       // Misma transacción para las dos escrituras: si enqueue() falla, la
       // fila no queda huérfana en 'local' sin que el usuario se entere.
       await db.transaction('rw', [db.hourLogs, db.outbox], async () => {
+        const txExisting = await db.hourLogs
+          .where('placementId')
+          .equals(placementId)
+          .and((l) => isSameDay(l.date, targetKey) && l.status !== 'REJECTED')
+          .toArray()
+        const txAlready = txExisting.reduce((acc, l) => acc + (Number(l.hours) || 0), 0)
+        if (txAlready + hoursValue > MAX_HOURS_PER_DAY) {
+          throw new Error('DAILY_LIMIT_EXCEEDED')
+        }
+
         // 1) Escribe local primero: esto es lo único que hace falta para que
         // el registro sobreviva a un refresh sin red — no depende de fetch.
         await db.hourLogs.add(row)
@@ -225,8 +218,12 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
 
       resetForm()
       onSaved?.()
-    } catch {
-      setSubmitError('No se pudo guardar el registro en este dispositivo. Intenta de nuevo.')
+    } catch (err) {
+      if (err instanceof Error && err.message === 'DAILY_LIMIT_EXCEEDED') {
+        setSubmitError(`No se puede guardar: superaría el límite de ${MAX_HOURS_PER_DAY} horas por día.`)
+      } else {
+        setSubmitError('No se pudo guardar el registro en este dispositivo. Intenta de nuevo.')
+      }
     } finally {
       setSubmitting(false)
     }
