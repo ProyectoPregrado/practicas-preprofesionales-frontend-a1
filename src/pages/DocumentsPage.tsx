@@ -138,6 +138,16 @@ export function DocumentsPage() {
     )
   }
 
+function getUploadErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.statusCode === 403) {
+    return 'No tienes permiso para subir documentos a esta práctica.'
+  }
+  if (err instanceof ApiError) {
+    return err.message
+  }
+  return 'No se pudo subir el documento'
+}
+
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setUploadError(null)
@@ -166,13 +176,7 @@ export function DocumentsPage() {
       setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
     } catch (err) {
-      const msg =
-        err instanceof ApiError && err.statusCode === 403
-          ? 'No tienes permiso para subir documentos a esta práctica.'
-          : err instanceof ApiError
-            ? err.message
-            : 'No se pudo subir el documento'
-      setUploadError(msg)
+      setUploadError(getUploadErrorMessage(err))
     } finally {
       setUploading(false)
     }
