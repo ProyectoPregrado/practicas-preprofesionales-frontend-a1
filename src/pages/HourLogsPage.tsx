@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Chip } from '@/components/Chip'
 import { HourLogForm } from '@/components/HourLogForm'
 import { HoursProgressPanel } from '@/components/HoursProgressPanel'
 import { PageHeader } from '@/components/PageHeader'
+import { Pagination } from '@/components/Pagination'
 import { EmptyState, LoadingState, Panel } from '@/components/Panel'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
@@ -24,10 +25,15 @@ import type { LocalHourLog } from '@/offline/db'
 import { useHourLogs } from '@/offline/hooks/useHourLogs'
 import { usePlacement } from '@/offline/hooks/usePlacement'
 
+const PAGE_SIZE = 10
+
+// Formateador a nivel de módulo para evitar instanciar Intl.DateTimeFormat repetidamente en cada fila
+const dateFormatter = new Intl.DateTimeFormat('es-EC', { day: '2-digit', month: 'short', year: 'numeric' })
+
 function formatDate(dateValue: string): string {
   const parsed = parseLocalDate(dateValue)
   if (Number.isNaN(parsed.getTime())) return dateValue
-  return new Intl.DateTimeFormat('es-EC', { day: '2-digit', month: 'short', year: 'numeric' }).format(parsed)
+  return dateFormatter.format(parsed)
 }
 
 function LedgerColumnHeader() {
@@ -47,8 +53,8 @@ function submittedNote(hours: HoursSummary) {
   return <span className="text-pending"> · {hours.submittedHours.toFixed(1)} sin aprobar</span>
 }
 
-function HourLogsList({ logs }: { logs: LocalHourLog[] }) {
-  if (logs.length === 0) {
+function HourLogsList({ logs, totalCount }: { logs: LocalHourLog[]; totalCount: number }) {
+  if (totalCount === 0) {
     return (
       <EmptyState
         title="Todavía no has registrado horas"
@@ -59,32 +65,29 @@ function HourLogsList({ logs }: { logs: LocalHourLog[] }) {
 
   return (
     <Ledger header={<LedgerColumnHeader />}>
-      {logs
-        .slice()
-        .reverse()
-        .map((log) => (
-          <LedgerRow key={log.id} syncState={log.syncState}>
-            <span className="font-data text-14 text-ink sm:w-28">{formatDate(log.date)}</span>
-            <span className="font-data text-13 text-inkSoft sm:w-28">
-              {log.startTime}–{log.endTime}
-            </span>
-            <span className="font-data text-14 text-ink sm:w-14">{log.hours}</span>
-            <div className="flex-1 text-14 text-inkBody">
-              <div>{log.activity}</div>
-              {log.syncState === 'failed' && (
-                <div className="mt-0.5 text-12 font-medium text-void">
-                  Fallo permanente: {log.reviewNote || 'Error en la sincronización'}
-                </div>
-              )}
-            </div>
-            <div className="flex flex-col items-end gap-1 sm:w-32 sm:text-right">
-              <StatusBadge status={log.status} />
-              {log.syncState === 'failed' && (
-                <Chip tone="void">Fallo permanente</Chip>
-              )}
-            </div>
-          </LedgerRow>
-        ))}
+      {logs.map((log) => (
+        <LedgerRow key={log.id} syncState={log.syncState}>
+          <span className="font-data text-14 text-ink sm:w-28">{formatDate(log.date)}</span>
+          <span className="font-data text-13 text-inkSoft sm:w-28">
+            {log.startTime}–{log.endTime}
+          </span>
+          <span className="font-data text-14 text-ink sm:w-14">{log.hours}</span>
+          <div className="flex-1 text-14 text-inkBody">
+            <div>{log.activity}</div>
+            {log.syncState === 'failed' && (
+              <div className="mt-0.5 text-12 font-medium text-void">
+                Fallo permanente: {log.reviewNote || 'Error en la sincronización'}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col items-end gap-1 sm:w-32 sm:text-right">
+            <StatusBadge status={log.status} />
+            {log.syncState === 'failed' && (
+              <Chip tone="void">Fallo permanente</Chip>
+            )}
+          </div>
+        </LedgerRow>
+      ))}
     </Ledger>
   )
 }
@@ -115,6 +118,9 @@ function NewHourLogDialog({ placementId }: { placementId: number }) {
 export function HourLogsPage() {
   const placement = usePlacement()
   const logs = useHourLogs(placement?.id ?? -1)
+  const [page, setPage] = useState(1)
+  // Antes de los return tempranos: los hooks se llaman siempre en el mismo orden (mientras carga, logs es undefined).
+  const sortedLogs = useMemo(() => (logs ? logs.slice().reverse() : []), [logs])
 
   if (placement === undefined) {
     return <LoadingState>Cargando tu práctica…</LoadingState>
@@ -137,6 +143,11 @@ export function HourLogsPage() {
   // hace falta más que sumar un arreglo, así que no se envuelve en useMemo.
   const hours = summarizeHours(logs, placement.requiredHours)
 
+  // Paginación con límite de 10 registros por página para mantener fluidez con 500+ registros
+  const pageCount = Math.max(1, Math.ceil(sortedLogs.length / PAGE_SIZE))
+  const currentPage = Math.min(page, pageCount)
+  const visibleLogs = sortedLogs.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
   return (
     <>
       <PageHeader
@@ -154,7 +165,8 @@ export function HourLogsPage() {
           </span>
         }
       >
-        <HourLogsList logs={logs} />
+        <HourLogsList logs={visibleLogs} totalCount={logs.length} />
+        <Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} />
       </Panel>
     </>
   )
