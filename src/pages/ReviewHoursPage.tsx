@@ -405,6 +405,9 @@ export function ReviewHoursPage() {
             <Button asChild variant="outline">
               <Link to="/practicantes">Volver a la lista</Link>
             </Button>
+            <Button asChild variant="outline">
+              <Link to={`/practicantes/${placementId}/documentos`}>Documentos</Link>
+            </Button>
             <Button asChild>
               <Link to={`/practicantes/${placementId}/evaluar`}>Evaluar practicante</Link>
             </Button>
