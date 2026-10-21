@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import * as authContext from '@/auth/AuthContext'
+import * as notify from '@/lib/notify'
 import { db, type LocalDocument, type LocalHourLog } from '@/offline/db'
 import { DocumentsPage } from './DocumentsPage'
 import { HourLogsPage } from './HourLogsPage'
@@ -18,6 +19,8 @@ vi.mock('@/auth/AuthContext', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/auth/AuthContext')>()
   return { ...actual, useAuth: vi.fn() }
 })
+// UX-4: aprobar pide confirmación con un aviso; aquí se acepta para llegar a la llamada a la API.
+vi.mock('@/lib/notify')
 vi.mock('@/offline/sync/scheduler', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/offline/sync/scheduler')>()
   return { ...actual, syncNow: vi.fn().mockResolvedValue(undefined) }
@@ -148,6 +151,7 @@ describe('estados de horas y documentos en español', () => {
     const user = userEvent.setup()
     signIn(tutor)
     vi.mocked(api).mockResolvedValue({} as never)
+    vi.mocked(notify.confirmar).mockResolvedValue(true)
     await seed({ logs: [hourLog('SUBMITTED', '2026-03-11')] })
     inRouter(<ReviewHoursPage />, '/practicantes/1/horas')
 

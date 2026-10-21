@@ -1,7 +1,6 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { type Application, apply, listMine } from '@/api/applications'
-import { ApiError } from '@/api/client'
 import { type Offer, getOffer } from '@/api/offers'
 import { Tag } from '@/components/Chip'
 import { PageHeader } from '@/components/PageHeader'
@@ -11,6 +10,8 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { parseLocalDate } from '@/lib/date'
+import { describeError } from '@/lib/describeError'
+import { confirmar, error as notifyError, exito } from '@/lib/notify'
 import { plural } from '@/lib/utils'
 
 // El DTO del backend exige @MinLength(20) en la motivación.
@@ -109,7 +110,6 @@ export function OfferDetailPage() {
   const [motivation, setMotivation] = useState('')
   const [motivationError, setMotivationError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -121,13 +121,12 @@ export function OfferDetailPage() {
       .catch((err) => {
         if (!cancelled) {
           setOffer(null)
-          if (err instanceof ApiError && err.statusCode === 404) {
-            setLoadError('Esta oferta no existe o ya no está disponible.')
-          } else if (err instanceof ApiError && err.statusCode === 403) {
-            setLoadError('No tienes permiso para acceder a esta oferta.')
-          } else {
-            setLoadError(err instanceof ApiError ? err.message : 'No se pudo cargar la oferta')
-          }
+          setLoadError(
+            describeError(err, {
+              forbidden: 'No tienes permiso para acceder a esta oferta.',
+              notFound: 'Esta oferta no existe o ya no está disponible.',
+            }) ?? 'No se pudo cargar la oferta',
+          )
         }
       })
 
@@ -149,7 +148,7 @@ export function OfferDetailPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setSubmitError(null)
+    if (!offer) return
 
     const trimmed = motivation.trim()
     if (trimmed.length < MIN_MOTIVATION_LENGTH) {
@@ -159,15 +158,22 @@ export function OfferDetailPage() {
     setMotivationError(null)
     setSubmitting(true)
 
+    // `submitting` cubre también la pregunta: un segundo clic no abre otra confirmación ni envía dos veces.
     try {
+      const accepted = await confirmar({
+        titulo: `¿Postular a ${offer.title}?`,
+        texto: `Tu postulación se enviará a ${offer.company.name} y no podrás volver a postular a esta oferta.`,
+        confirmar: 'Sí, postular',
+      })
+      if (!accepted) return
       const created = await apply(offerId, trimmed)
       setExistingApplication(created)
+      await exito('Postulación enviada')
     } catch (err) {
-      if (err instanceof ApiError && err.statusCode === 403) {
-        setSubmitError('No tienes permiso para postular a esta oferta.')
-      } else {
-        setSubmitError(err instanceof ApiError ? err.message : 'No se pudo enviar la postulación')
-      }
+      await notifyError(
+        'No se pudo enviar la postulación',
+        describeError(err, { forbidden: 'No tienes permiso para postular a esta oferta.' }),
+      )
     } finally {
       setSubmitting(false)
     }
@@ -262,12 +268,6 @@ export function OfferDetailPage() {
                 </p>
               ) : null}
             </div>
-
-            {submitError ? (
-              <p role="alert" className="rounded-md bg-chipVoid px-3 py-2.5 text-13 text-void">
-                {submitError}
-              </p>
-            ) : null}
 
             <Button type="submit" disabled={submitting} className="self-start">
               {submitting ? 'Enviando…' : 'Enviar postulación'}
