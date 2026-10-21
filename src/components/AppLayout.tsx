@@ -2,15 +2,8 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth, type Role, UnsyncedHoursWarningError } from '@/auth/AuthContext'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { SyncIndicator } from '@/components/SyncIndicator'
+import { confirmar } from '@/lib/notify'
 import { startSync } from '@/offline/sync/scheduler'
 import { cn } from '@/lib/utils'
 
@@ -62,10 +55,14 @@ function initialsOf(fullName: string | undefined): string {
   return (first + second).toUpperCase() || '··'
 }
 
+function pendingHoursText(count: number): string {
+  if (count === 1) return 'Hay 1 registro de hora pendiente de sincronizar.'
+  return `Hay ${count} registros de horas pendientes de sincronizar.`
+}
+
 export function AppLayout() {
   const { user, role, logout } = useAuth()
-  const [pendingUnsyncedCount, setPendingUnsyncedCount] = useState<number | null>(null)
-  const [submittingLogout, setSubmittingLogout] = useState(false)
+  const [leaving, setLeaving] = useState(false)
 
   // Reactiva sync cuando hay una sesión autenticada activa
   useEffect(() => {
@@ -74,25 +71,21 @@ export function AppLayout() {
     }
   }, [user])
 
+  // `leaving` deshabilita Salir también mientras la pregunta está abierta: un segundo clic no abre otra.
   async function handleLogout() {
+    setLeaving(true)
     try {
       await logout()
     } catch (err) {
-      if (err instanceof UnsyncedHoursWarningError) {
-        setPendingUnsyncedCount(err.pendingCount)
-      } else {
-        throw err
-      }
-    }
-  }
-
-  async function handleConfirmDiscardLogout() {
-    setSubmittingLogout(true)
-    try {
-      await logout({ forceDiscard: true })
-      setPendingUnsyncedCount(null)
+      if (!(err instanceof UnsyncedHoursWarningError)) throw err
+      const discard = await confirmar({
+        titulo: 'Horas sin sincronizar en este equipo',
+        texto: `${pendingHoursText(err.pendingCount)} Si cierras sesión en este equipo compartido, se descartarán definitivamente.`,
+        confirmar: 'Descartar horas y salir',
+      })
+      if (discard) await logout({ forceDiscard: true })
     } finally {
-      setSubmittingLogout(false)
+      setLeaving(false)
     }
   }
 
@@ -121,7 +114,7 @@ export function AppLayout() {
               <span className="block text-11 text-inkSoft">{role ? ROLE_LABEL[role] : ''}</span>
             </span>
           </div>
-          <Button type="button" variant="outline" size="sm" onClick={handleLogout}>
+          <Button type="button" variant="outline" size="sm" onClick={handleLogout} disabled={leaving}>
             Salir
           </Button>
         </div>
@@ -169,43 +162,6 @@ export function AppLayout() {
           </div>
         </main>
       </div>
-
-      <Dialog
-        open={pendingUnsyncedCount !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingUnsyncedCount(null)
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Horas sin sincronizar en este equipo</DialogTitle>
-            <DialogDescription>
-              Hay {pendingUnsyncedCount}{' '}
-              {pendingUnsyncedCount === 1 ? 'registro de hora' : 'registros de horas'} pendiente
-              {pendingUnsyncedCount === 1 ? '' : 's'} de sincronizar.
-              Si cerrás sesión en este equipo compartido, se descartarán definitivamente.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setPendingUnsyncedCount(null)}
-              disabled={submittingLogout}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={handleConfirmDiscardLogout}
-              disabled={submittingLogout}
-            >
-              {submittingLogout ? 'Descartando…' : 'Descartar horas y salir'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
