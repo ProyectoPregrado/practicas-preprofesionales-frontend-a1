@@ -15,11 +15,10 @@ import { parseLocalDate } from '@/lib/date'
 import { type HoursSummary, averagePerRegisteredDay, summarizeHours } from '@/lib/hours'
 import { NO_FILTERS, countByStatus, filterHourLogs, monthsOf } from '@/lib/hourLogFilters'
 import { plural } from '@/lib/utils'
+import { usePagination } from '@/lib/usePagination'
 import type { LocalHourLog, LocalPlacement } from '@/offline/db'
 import { useHourLogs } from '@/offline/hooks/useHourLogs'
 import { usePlacement } from '@/offline/hooks/usePlacement'
-
-const PAGE_SIZE = 10
 
 // Formateador a nivel de módulo para evitar instanciar Intl.DateTimeFormat repetidamente en cada fila
 const dateFormatter = new Intl.DateTimeFormat('es-EC', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -190,7 +189,6 @@ function NoMatches({ onClear }: { onClear: () => void }) {
 /** El libro ya cargado: el estado de los filtros y la página vive aquí, no en la pantalla que espera los datos. */
 function HourLogBook({ placement, logs }: { placement: LocalPlacement; logs: LocalHourLog[] }) {
   const [filters, setFilters] = useState(NO_FILTERS)
-  const [page, setPage] = useState(1)
   // Más recientes primero; el hook los entrega de más antiguo a más reciente.
   const sortedLogs = useMemo(() => logs.slice().reverse(), [logs])
   const filtered = useMemo(() => filterHourLogs(sortedLogs, filters), [sortedLogs, filters])
@@ -198,14 +196,12 @@ function HourLogBook({ placement, logs }: { placement: LocalPlacement; logs: Loc
   // Totales recalculados en cada render a propósito: no hace falta más que sumar un arreglo.
   const hours = summarizeHours(logs, placement.requiredHours)
 
-  // Paginación con límite de 10 registros por página para mantener fluidez con 500+ registros
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const currentPage = Math.min(page, pageCount)
-  const visibleLogs = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+  // Paginación (5 a 30 filas por página, a elección de cada usuario) para mantener fluidez con 500+ registros
+  const { visibleItems: visibleLogs, resetPage, pagination } = usePagination(filtered)
 
   function changeFilters(next: typeof filters) {
     setFilters(next)
-    setPage(1)
+    resetPage()
   }
 
   return (
@@ -239,7 +235,7 @@ function HourLogBook({ placement, logs }: { placement: LocalPlacement; logs: Loc
           </Ledger>
         ) : null}
         <div className="px-4 pb-4">
-          <Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} />
+          <Pagination {...pagination} />
         </div>
       </Panel>
 
