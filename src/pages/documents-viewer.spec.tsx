@@ -12,6 +12,8 @@ import { StudentDocumentsPage } from './StudentDocumentsPage'
 // DOC-2: subir el archivo de verdad, verlo dentro de la app y que el tutor vea los de su practicante.
 
 vi.mock('@/api/documents')
+// UX-9: subir avisa con notify (SweetAlert2), que en jsdom falla por falta de matchMedia; aquí no se prueba el aviso.
+vi.mock('@/lib/notify')
 vi.mock('@/auth/AuthContext', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/auth/AuthContext')>()
   return { ...actual, useAuth: vi.fn() }
