@@ -50,6 +50,7 @@ interface AuthContextValue {
   role: Role | null
   login: (email: string, password: string, options?: LoginOptions) => Promise<void>
   confirmDiscard?: () => Promise<void>
+  cancelPendingLogin?: () => void
   logout: (options?: LoginOptions) => Promise<void>
 }
 
@@ -124,6 +125,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return unsubUnauthorized
   }, [clearSessionOnly, navigate])
 
+  // La revocación en el servidor es de mejor esfuerzo y no bloquea al usuario: sin conexión
+  // el refresh token queda vivo hasta que expire.
+  function revokeInBackground(refreshToken: string | null | undefined) {
+    if (!refreshToken) return
+    api('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken }),
+    }).catch(() => undefined)
+  }
+
+  // S-1b: el aviso de horas sin sincronizar guarda la respuesta del login, con su refresh token vivo,
+  // sin abrir sesión. Si el usuario cancela o inicia con otras credenciales, ese token se revoca.
+  function cancelPendingLogin() {
+    const pending = pendingAuthRef.current
+    pendingAuthRef.current = null
+    revokeInBackground(pending?.refreshToken)
+  }
+
   async function login(email: string, password: string, options?: LoginOptions) {
     let authData: PendingAuth
     if (options?.forceDiscard && pendingAuthRef.current && (pendingAuthRef.current.loggedUser.email === email || !email)) {
@@ -131,7 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       authData = pendingAuthRef.current
       pendingAuthRef.current = null
     } else {
-      pendingAuthRef.current = null
+      cancelPendingLogin()
       const response = await api<LoginResponse>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
@@ -188,20 +207,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isHandling401Ref.current = false
     const refreshToken = localStorage.getItem('refresh_token')
     await performCleanup(options)
-    if (refreshToken) {
-      // La revocación en el servidor es de mejor esfuerzo y no bloquea el cierre local: sin conexión
-      // el refresh token queda vivo hasta que expire, pero el usuario no se queda esperando.
-      api('/auth/logout', {
-        method: 'POST',
-        body: JSON.stringify({ refreshToken }),
-      }).catch(() => undefined)
-    }
+    revokeInBackground(refreshToken)
     getCrossTabChannel().postMessage('LOGOUT', { reason: 'USER_LOGOUT' })
     navigate('/login')
   }
 
   return (
-    <AuthContext.Provider value={{ user, role: user?.role ?? null, login, confirmDiscard, logout }}>
+    <AuthContext.Provider value={{ user, role: user?.role ?? null, login, confirmDiscard, cancelPendingLogin, logout }}>
       {children}
     </AuthContext.Provider>
   )
