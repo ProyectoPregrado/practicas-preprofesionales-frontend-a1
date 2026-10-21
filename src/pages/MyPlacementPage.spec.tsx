@@ -1,4 +1,5 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as authContext from '@/auth/AuthContext'
@@ -93,13 +94,51 @@ describe('MyPlacementPage — panel de inicio (REDISEÑO-3)', () => {
     expect(await screen.findByText('No tienes una práctica activa todavía')).toBeInTheDocument()
   })
 
-  it('el encabezado dice la empresa y el periodo, y lleva a registrar horas', async () => {
+  it('el encabezado dice la empresa y el periodo, y ofrece registrar horas', async () => {
     await seed()
     renderPage()
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Mi práctica' })).toBeInTheDocument()
     expect(screen.getByText(/Empresa #7 · /)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Registrar horas' })).toHaveAttribute('href', '/horas')
+    expect(screen.getByRole('button', { name: 'Registrar horas' })).toBeInTheDocument()
+  })
+
+  // «Mis horas» ya está en la navegación: el botón del inicio abre el registro en un modal, sin cambiar de página.
+  describe('registrar horas desde el inicio', () => {
+    it('abre el formulario de registro en un modal y la página de inicio sigue ahí', async () => {
+      const user = userEvent.setup()
+      await seed()
+      renderPage()
+
+      await user.click(await screen.findByRole('button', { name: 'Registrar horas' }))
+
+      const dialog = await screen.findByRole('dialog', { name: 'Registrar horas' })
+      expect(within(dialog).getByLabelText('Fecha')).toBeInTheDocument()
+      expect(within(dialog).getByLabelText('Actividad')).toBeInTheDocument()
+      // Con el modal abierto el resto de la página queda oculto para lectores de pantalla, pero sigue montado.
+      expect(screen.getByRole('heading', { level: 1, name: 'Mi práctica', hidden: true })).toBeInTheDocument()
+    })
+
+    it('ya no es un enlace a /horas', async () => {
+      await seed()
+      renderPage()
+
+      await screen.findByRole('heading', { level: 1, name: 'Mi práctica' })
+      expect(screen.queryByRole('link', { name: 'Registrar horas' })).toBeNull()
+    })
+
+    it('se cierra con Escape sin guardar nada', async () => {
+      const user = userEvent.setup()
+      await seed()
+      renderPage()
+      await user.click(await screen.findByRole('button', { name: 'Registrar horas' }))
+      await screen.findByRole('dialog', { name: 'Registrar horas' })
+
+      await user.keyboard('{Escape}')
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      expect(await db.hourLogs.count()).toBe(0)
+    })
   })
 
   describe('tarjeta de progreso', () => {
