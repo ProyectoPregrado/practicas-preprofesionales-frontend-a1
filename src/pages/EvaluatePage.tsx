@@ -5,24 +5,43 @@ import { ApiError } from '@/api/client'
 import { submitEvaluation } from '@/api/evaluations'
 import { useAuth } from '@/auth/AuthContext'
 import { PageHeader } from '@/components/PageHeader'
+import { ProgressBar } from '@/components/ProgressBar'
 import { EmptyState, LoadingState, Panel, Section } from '@/components/Panel'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { parseLocalDate } from '@/lib/date'
-import { db, type LocalPlacement } from '@/offline/db'
+import { summarizeHours } from '@/lib/hours'
+import { db, type LocalHourLog, type LocalPlacement } from '@/offline/db'
 
 type ScoreField = 'technical' | 'communication' | 'punctuality'
 
 // Rúbrica fija (technical, communication, punctuality, 1 a 5): una épica
 // posterior del backlog la reemplaza por criterios configurables — no se
 // adelanta esa flexibilidad aquí.
-const CRITERIA: { field: ScoreField; label: string }[] = [
-  { field: 'technical', label: 'Desempeño técnico' },
-  { field: 'communication', label: 'Comunicación' },
-  { field: 'punctuality', label: 'Puntualidad' },
+const CRITERIA: { field: ScoreField; label: string; hint: string }[] = [
+  { field: 'technical', label: 'Desempeño técnico', hint: 'Calidad y autonomía en las tareas asignadas.' },
+  { field: 'communication', label: 'Comunicación', hint: 'Claridad con el equipo y al pedir ayuda.' },
+  { field: 'punctuality', label: 'Puntualidad', hint: 'Cumple horarios y plazos acordados.' },
 ]
+
+// Cómo leer cada puntaje: se muestra junto a la rúbrica, no dentro del desplegable, para que las opciones sigan
+// siendo solo el número.
+const SCALE: { score: number; label: string }[] = [
+  { score: 1, label: 'Insuficiente' },
+  { score: 2, label: 'Por mejorar' },
+  { score: 3, label: 'Cumple' },
+  { score: 4, label: 'Bueno' },
+  { score: 5, label: 'Excelente' },
+]
+
+/** Promedio de los puntajes ya elegidos; `null` mientras no haya ninguno. */
+function averageOf(scores: Record<ScoreField, string>): number | null {
+  const chosen = Object.values(scores).filter(Boolean).map(Number)
+  if (chosen.length === 0) return null
+  return chosen.reduce((sum, score) => sum + score, 0) / chosen.length
+}
 
 const SCORE_OPTIONS = ['1', '2', '3', '4', '5']
 
@@ -35,6 +54,55 @@ function periodFromStartDate(startDate: string): string {
   const year = parsed.getFullYear()
   const term = parsed.getMonth() < 6 ? 1 : 2
   return `${year}-${term}`
+}
+
+interface EvaluationSummaryProps {
+  placement: LocalPlacement
+  average: number | null
+}
+
+/** Columna de apoyo: cómo va el practicante en horas, el promedio que se está armando y la escala. */
+function EvaluationSummary({ placement, average }: EvaluationSummaryProps) {
+  const logs = useLiveQuery<LocalHourLog[]>(
+    () => db.hourLogs.where('placementId').equals(placement.id).toArray(),
+    [placement.id],
+  )
+  const hours = summarizeHours(logs, placement.requiredHours)
+  return (
+    <>
+      <Section title="Resumen del practicante">
+        <div className="flex flex-col gap-3 px-[18px] py-4">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-13 text-inkSoft">Horas aprobadas</span>
+            <span className="font-data text-14 text-ink">
+              {hours.approvedHours.toFixed(1)} / {hours.requiredHours}
+            </span>
+          </div>
+          <ProgressBar value={hours.approvedPct} pendingValue={hours.submittedPct} label="Progreso de horas aprobadas" />
+          <div className="flex items-baseline justify-between gap-3 border-t border-paperRule pt-3">
+            <span className="text-13 text-inkSoft">Promedio de la rúbrica</span>
+            <span className="font-display text-22 font-bold text-stamp">
+              {average === null ? '—' : average.toFixed(1)}
+              <span className="ml-1 text-13 font-normal text-inkSoft">/ 5</span>
+            </span>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Escala">
+        <dl className="divide-y divide-paperRule">
+          {SCALE.map(({ score, label }) => (
+            <div key={score} className="flex items-center gap-3 px-[18px] py-2.5">
+              <dt className="flex size-7 flex-none items-center justify-center rounded-lg bg-soft font-data text-13 font-semibold text-stamp">
+                {score}
+              </dt>
+              <dd className="text-14 text-inkBody">{label}</dd>
+            </div>
+          ))}
+        </dl>
+      </Section>
+    </>
+  )
 }
 
 /** Evaluación del tutor sobre un placement: rúbrica fija + comentario. No sincronizable: siempre requiere red. */
@@ -147,6 +215,10 @@ function getEvaluateErrorMessage(err: unknown): string {
         }
       />
 
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <EvaluationSummary placement={placement} average={averageOf(scores)} />
+      </div>
+
       {submitted ? (
         <Panel>
           <EmptyState
@@ -163,9 +235,10 @@ function getEvaluateErrorMessage(err: unknown): string {
         <Section title="Rúbrica">
           <form className="flex flex-col gap-4 px-[18px] py-4" onSubmit={handleSubmit} noValidate>
             <div className="grid gap-4 sm:grid-cols-3">
-              {CRITERIA.map(({ field, label }) => (
+              {CRITERIA.map(({ field, label, hint }) => (
                 <div key={field} className="flex flex-col gap-1.5">
                   <Label htmlFor={`eval-${field}`}>{label}</Label>
+                  <p className="text-12 text-inkSoft">{hint}</p>
                   <Select
                     value={scores[field]}
                     onValueChange={(value) => setScores((prev) => ({ ...prev, [field]: value }))}
