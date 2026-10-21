@@ -141,7 +141,7 @@ function PendingDocuments({ documents }: { documents: LocalDocument[] | undefine
               <div className="truncate text-14 font-semibold text-ink">{doc.filename}</div>
               <div className="mt-0.5 text-12 text-inkSoft">{doc.kind}</div>
             </div>
-            <StatusBadge status={doc.status} />
+            <StatusBadge status={doc.status} domain="document" />
           </div>
         ))}
       </div>
@@ -195,7 +195,7 @@ function RecentLogs({ logs }: { logs: LocalHourLog[] | undefined }) {
               )}
             </div>
             <div className="flex flex-col items-end gap-1 sm:w-32 sm:text-right">
-              <StatusBadge status={log.status} />
+              <StatusBadge status={log.status} domain="hour" />
               {log.syncState === 'failed' && (
                 <Chip tone="void">Fallo permanente</Chip>
               )}

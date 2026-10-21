@@ -1,4 +1,4 @@
-import { type FormEvent, useRef, useState } from 'react'
+import { type FormEvent, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError, api } from '@/api/client'
@@ -6,6 +6,7 @@ import { useAuth } from '@/auth/AuthContext'
 import { HoursProgressPanel } from '@/components/HoursProgressPanel'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, LoadingState, Panel } from '@/components/Panel'
+import { Pagination } from '@/components/Pagination'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import {
@@ -26,6 +27,7 @@ import { summarizeHours } from '@/lib/hours'
 import { describeError } from '@/lib/describeError'
 import { confirmar, error as notifyError, exito } from '@/lib/notify'
 import { plural } from '@/lib/utils'
+import { usePagination } from '@/lib/usePagination'
 import { db, type LocalHourLog, type LocalPlacement } from '@/offline/db'
 import { syncNow } from '@/offline/sync/scheduler'
 
@@ -106,10 +108,7 @@ function ReviewList({ logs, actionState, onApprove, onReject }: ReviewListProps)
 
   return (
     <Ledger header={<LedgerColumnHeader />}>
-      {logs
-        .slice()
-        .reverse()
-        .map((log) => (
+      {logs.map((log) => (
           <LedgerRow key={log.id} syncState={log.syncState}>
             <span className="font-data text-14 text-ink sm:w-28">{formatDate(log.date)}</span>
             <span className="font-data text-13 text-inkSoft sm:w-28">
@@ -118,7 +117,7 @@ function ReviewList({ logs, actionState, onApprove, onReject }: ReviewListProps)
             <span className="font-data text-14 text-ink sm:w-14">{log.hours}</span>
             <span className="flex-1 text-14 text-inkBody">{log.activity}</span>
             <span className="sm:w-32">
-              <StatusBadge status={log.status} />
+              <StatusBadge status={log.status} domain="hour" />
             </span>
             <span className="flex flex-wrap justify-end gap-1.5 sm:w-44">
               <ReviewActions
@@ -264,6 +263,10 @@ export function ReviewHoursPage() {
     [placementId],
   )
 
+  // Más recientes primero; el hook los entrega de más antiguo a más reciente. Se paginan (5 a 30 filas, a elección del usuario).
+  const newestFirst = useMemo(() => logs?.slice().reverse(), [logs])
+  const { visibleItems: visibleLogs, pagination } = usePagination(newestFirst)
+
   const [actionState, setActionState] = useState<Record<number, ActionState>>({})
   const [rejectingLog, setRejectingLog] = useState<LocalHourLog | null>(null)
   // Evita abrir dos preguntas (y revisar dos veces) con un doble clic mientras la confirmación está abierta.
@@ -387,11 +390,14 @@ export function ReviewHoursPage() {
         }
       >
         <ReviewList
-          logs={logs}
+          logs={visibleLogs}
           actionState={actionState}
           onApprove={approve}
           onReject={setRejectingLog}
         />
+        <div className="px-4 pb-4">
+          <Pagination {...pagination} />
+        </div>
       </Panel>
 
       <RejectDialog

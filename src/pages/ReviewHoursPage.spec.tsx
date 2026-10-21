@@ -357,3 +357,71 @@ describe('ReviewHoursPage — confirmar y avisar (UX-4)', () => {
     })
   })
 })
+
+// REDISEÑO-5: la revisión de horas también pagina, con las filas por página que elige cada tutor.
+describe('ReviewHoursPage — filas por página', () => {
+  const rowsShown = () => screen.queryAllByText(/^Tarea \d+$/)
+
+  async function seedLogs(count: number) {
+    vi.mocked(authContext.useAuth).mockReturnValue({
+      user: { id: 2, email: 'tutor0@miyura.com', fullName: 'Tutor 0', role: 'TUTOR', companyId: null },
+      role: 'TUTOR',
+      login: vi.fn(),
+      logout: vi.fn(),
+    })
+    await db.placements.put({
+      id: 1,
+      studentId: 10,
+      tutorId: 2,
+      companyId: 1,
+      startDate: '2026-01-01',
+      endDate: '2026-06-01',
+      requiredHours: 200,
+      status: 'ACTIVE',
+      version: 1,
+      updatedAt: new Date().toISOString(),
+    })
+    await db.hourLogs.bulkPut(
+      Array.from({ length: count }, (_, i) => ({
+        id: i + 1,
+        placementId: 1,
+        date: `2026-04-${String((i % 28) + 1).padStart(2, '0')}`,
+        startTime: '08:00',
+        endTime: '12:00',
+        hours: 4,
+        activity: `Tarea ${i + 1}`,
+        status: 'SUBMITTED' as const,
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        syncState: 'synced' as const,
+      })),
+    )
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    await db.placements.clear()
+    await db.hourLogs.clear()
+  })
+
+  it('por defecto muestra 10 registros por página y avisa que hay más', async () => {
+    await seedLogs(12)
+    renderPage(1)
+
+    await waitFor(() => expect(rowsShown()).toHaveLength(10))
+    expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
+  })
+
+  it('al elegir 5 filas por página muestra 5', async () => {
+    const user = userEvent.setup()
+    await seedLogs(12)
+    renderPage(1)
+    await waitFor(() => expect(rowsShown()).toHaveLength(10))
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filas por página' }), '5')
+
+    expect(rowsShown()).toHaveLength(5)
+    expect(screen.getByText('Página 1 de 3')).toBeInTheDocument()
+  })
+})

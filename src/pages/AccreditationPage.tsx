@@ -6,9 +6,11 @@ import { PageHeader } from '@/components/PageHeader'
 import { AsyncSection, EmptyState, Panel, TableHeaderRow, rowClass } from '@/components/Panel'
 import { ProgressBar } from '@/components/ProgressBar'
 import { StatCard, StatGrid } from '@/components/StatCard'
+import { Pagination } from '@/components/Pagination'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Ledger } from '@/components/ledger/Ledger'
 import { plural } from '@/lib/utils'
+import { usePagination } from '@/lib/usePagination'
 
 // El backend exige `period` con formato AAAA-1/AAAA-2 (ver AccreditationQueryDto);
 // el selector nunca debe poder mandar un valor vacío, así que se restringe a
@@ -77,11 +79,13 @@ export function AccreditationPage() {
   const [period, setPeriod] = useState<(typeof PERIODS)[number]>(PERIODS[0])
   const [rows, setRows] = useState<AccreditationRow[] | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
+  const { visibleItems: visibleRows, resetPage, pagination } = usePagination(rows)
 
   useEffect(() => {
     let cancelled = false
     setRows(undefined)
     setError(null)
+    resetPage()
     reportForPeriod(period)
       .then((data) => {
         if (!cancelled) setRows(data)
@@ -92,7 +96,7 @@ export function AccreditationPage() {
     return () => {
       cancelled = true
     }
-  }, [period])
+  }, [period, resetPage])
 
   return (
     <>
@@ -128,13 +132,16 @@ export function AccreditationPage() {
           />
         }
       >
-        {(items) => (
+        {() => (
           <Panel>
             <Ledger header={<ColumnHeader />}>
-              {items.map((row) => (
+              {visibleRows.map((row) => (
                 <AccreditationRowItem key={row.placementId} row={row} />
               ))}
             </Ledger>
+            <div className="px-4 pb-4">
+              <Pagination {...pagination} />
+            </div>
           </Panel>
         )}
       </AsyncSection>

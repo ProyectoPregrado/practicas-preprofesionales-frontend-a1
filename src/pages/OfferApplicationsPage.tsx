@@ -10,12 +10,14 @@ import { ApiError } from '@/api/client'
 import { type Offer, getOffer } from '@/api/offers'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, LoadingState, Panel, TableHeaderRow, rowClass } from '@/components/Panel'
+import { Pagination } from '@/components/Pagination'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Ledger } from '@/components/ledger/Ledger'
 import { parseLocalDate } from '@/lib/date'
 import { describeError } from '@/lib/describeError'
 import { confirmar, error, exito } from '@/lib/notify'
+import { usePagination } from '@/lib/usePagination'
 
 type DecisionState = 'interviewing' | 'accepting' | 'rejecting' | null
 
@@ -90,6 +92,8 @@ export function OfferApplicationsPage() {
   const [offer, setOffer] = useState<Offer | null | undefined>(undefined)
   const [applications, setApplications] = useState<OfferApplication[] | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  const { visibleItems: visibleApplications, pagination } = usePagination(applications)
 
   const [decisionState, setDecisionState] = useState<Record<number, DecisionState>>({})
   // Evita abrir dos preguntas (y decidir dos veces) con un doble clic mientras la confirmación está abierta.
@@ -231,7 +235,7 @@ export function OfferApplicationsPage() {
           />
         ) : (
           <Ledger header={<ColumnHeader />}>
-            {applications.map((application) => {
+            {visibleApplications.map((application) => {
               const state = decisionState[application.id] ?? null
               const busy = state !== null
               const decidable =
@@ -291,6 +295,9 @@ export function OfferApplicationsPage() {
             })}
           </Ledger>
         )}
+        <div className="px-4 pb-4">
+          <Pagination {...pagination} />
+        </div>
       </Panel>
     </>
   )

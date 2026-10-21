@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { HourLogsPage } from './HourLogsPage'
 import * as placementHooks from '@/offline/hooks/usePlacement'
 import * as hourLogsHooks from '@/offline/hooks/useHourLogs'
@@ -8,6 +8,18 @@ import type { LocalHourLog, LocalPlacement } from '@/offline/db'
 
 vi.mock('@/offline/hooks/usePlacement')
 vi.mock('@/offline/hooks/useHourLogs')
+vi.mock('@/auth/AuthContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/auth/AuthContext')>()
+  return {
+    ...actual,
+    useAuth: () => ({
+      user: { id: 10, email: 'u@miyura.com', fullName: 'Usuario', role: 'STUDENT', companyId: null },
+      role: 'STUDENT',
+      login: () => undefined,
+      logout: () => undefined,
+    }),
+  }
+})
 
 describe('HourLogsPage', () => {
   it('muestra el badge y mensaje de fallo permanente cuando syncState es failed', () => {
@@ -376,5 +388,111 @@ describe('libro de horas rediseñado (REDISEÑO-4)', () => {
 
       expect(screen.getByText('1 registro espera sincronizarse con el servidor')).toBeInTheDocument()
     })
+  })
+})
+
+// REDISEÑO-5: cada persona elige cuántas filas ve por página (5 a 30, de 5 en 5) y se le recuerda.
+describe('libro de horas — filas por página', () => {
+  const placement: LocalPlacement = {
+    id: 1,
+    studentId: 10,
+    tutorId: 2,
+    companyId: 3,
+    startDate: '2026-01-01',
+    endDate: '2026-06-01',
+    requiredHours: 240,
+    status: 'ACTIVE',
+    version: 1,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+  const logs = (count: number): LocalHourLog[] =>
+    Array.from({ length: count }, (_, i) => ({
+      id: i + 1,
+      placementId: 1,
+      date: `2026-04-${String((i % 28) + 1).padStart(2, '0')}`,
+      startTime: '08:00',
+      endTime: '12:00',
+      hours: 4,
+      activity: `Fila ${i + 1}`,
+      status: 'APPROVED' as const,
+      syncState: 'synced' as const,
+      version: 1,
+      updatedAt: '2026-04-01T12:00:00.000Z',
+    }))
+  const rowsShown = () => screen.queryAllByText(/^Fila \d+$/)
+
+  function renderWith(count: number) {
+    vi.mocked(placementHooks.usePlacement).mockReturnValue(placement)
+    vi.mocked(hourLogsHooks.useHourLogs).mockReturnValue(logs(count))
+    return render(<HourLogsPage />)
+  }
+
+  beforeEach(() => localStorage.clear())
+
+  it('por defecto muestra 10 filas y deja elegir de 5 en 5 hasta 30', () => {
+    renderWith(25)
+
+    expect(rowsShown()).toHaveLength(10)
+    const select = screen.getByRole('combobox', { name: 'Filas por página' })
+    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual(['5', '10', '15', '20', '25', '30'])
+  })
+
+  it('al elegir 5 muestra 5 filas, recalcula las páginas y lo recuerda para este usuario', async () => {
+    const user = userEvent.setup()
+    renderWith(25)
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filas por página' }), '5')
+
+    expect(rowsShown()).toHaveLength(5)
+    expect(screen.getByText('Página 1 de 5')).toBeInTheDocument()
+    expect(localStorage.getItem('pageSize:10')).toBe('5')
+  })
+
+  it('al elegir 30 caben las 25 filas de una vez y desaparecen Anterior y Siguiente', async () => {
+    const user = userEvent.setup()
+    renderWith(25)
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filas por página' }), '30')
+
+    expect(rowsShown()).toHaveLength(25)
+    expect(screen.queryByRole('button', { name: 'Siguiente' })).toBeNull()
+  })
+
+  it('al cambiar el tamaño estando en otra página vuelve a la primera', async () => {
+    const user = userEvent.setup()
+    renderWith(25)
+    await user.click(screen.getByRole('button', { name: 'Siguiente' }))
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filas por página' }), '15')
+
+    expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
+  })
+
+  it('usa la preferencia guardada de este usuario al abrir la pantalla', () => {
+    localStorage.setItem('pageSize:10', '20')
+    renderWith(25)
+
+    expect(rowsShown()).toHaveLength(20)
+    expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
+  })
+
+  it('la preferencia de otro usuario no se aplica', () => {
+    localStorage.setItem('pageSize:99', '30')
+    renderWith(25)
+
+    expect(rowsShown()).toHaveLength(10)
+  })
+
+  it('con 5 o menos registros no hay nada que elegir: no aparece el selector', () => {
+    renderWith(5)
+
+    expect(screen.queryByRole('combobox', { name: 'Filas por página' })).toBeNull()
+  })
+
+  it('con 6 a 10 registros sí aparece el selector, aunque no haya más de una página', () => {
+    renderWith(8)
+
+    expect(screen.getByRole('combobox', { name: 'Filas por página' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Siguiente' })).toBeNull()
   })
 })
