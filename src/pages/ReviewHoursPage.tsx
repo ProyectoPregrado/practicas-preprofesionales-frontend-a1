@@ -291,6 +291,9 @@ export function ReviewHoursPage() {
     } catch (err) {
       // UX-4: un aviso que la persona tiene que leer (el mensaje en línea quedaba arriba de la lista, fuera de la
       // vista). Se espera: los botones siguen deshabilitados hasta que se cierra.
+      // UX-10: un 400 significa que el registro ya no está pendiente (otra pestaña u otro equipo lo revisó): la lista
+      // local está vieja, así que se re-sincroniza antes del aviso. Si falla, el aviso sigue siendo lo importante.
+      if (err instanceof ApiError && err.statusCode === 400) await syncNow().catch(() => undefined)
       await notifyError(
         status === 'APPROVED' ? 'No se pudo aprobar las horas' : 'No se pudo devolver el registro',
         getReviewErrorMessage(err),
