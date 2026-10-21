@@ -124,7 +124,7 @@ export function AccreditationPage() {
         empty={
           <EmptyState
             title="No hay placements en este periodo"
-            description="Probá con el otro periodo académico."
+            description="Prueba con el otro periodo académico."
           />
         }
       >

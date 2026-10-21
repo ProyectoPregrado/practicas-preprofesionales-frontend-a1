@@ -48,7 +48,7 @@ function PlacementHero({
   return (
     <HeroPanel
       title={`Te faltan ${remaining.toFixed(1)} horas aprobadas`}
-      description="Registrá tus horas el mismo día. Tu tutor las revisa y lo que apruebe cuenta para el acta final."
+      description="Registra tus horas el mismo día. Tu tutor las revisa y lo que apruebe cuenta para el acta final."
       aside={
         <>
           <HeroCard label="Sin aprobar">
@@ -229,7 +229,7 @@ export function MyPlacementPage() {
     return (
       <EmptyState
         title="No tienes una práctica activa todavía"
-        description="Cuando la coordinación active tu plaza, la vas a ver acá."
+        description="Cuando la coordinación active tu plaza, la verás aquí."
       />
     )
   }

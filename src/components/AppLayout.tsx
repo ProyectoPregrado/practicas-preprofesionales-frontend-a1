@@ -183,7 +183,7 @@ export function AppLayout() {
               Hay {pendingUnsyncedCount}{' '}
               {pendingUnsyncedCount === 1 ? 'registro de hora' : 'registros de horas'} pendiente
               {pendingUnsyncedCount === 1 ? '' : 's'} de sincronizar.
-              Si cerrás sesión en este equipo compartido, se descartarán definitivamente.
+              Si cierras sesión en este equipo compartido, se descartarán definitivamente.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -97,7 +97,7 @@ function ReviewList({ logs, actionState, onApprove, onReject }: ReviewListProps)
     return (
       <EmptyState
         title="No tienes horas pendientes de revisar"
-        description="Cuando tu practicante envíe horas nuevas, aparecen acá."
+        description="Cuando tu practicante envíe horas nuevas, aparecen aquí."
       />
     )
   }

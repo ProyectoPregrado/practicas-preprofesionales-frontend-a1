@@ -62,7 +62,7 @@ export function MyApplicationsPage() {
       return (
         <EmptyState
           title="Todavía no has postulado a ninguna oferta"
-          description="Mirá las ofertas abiertas y postulá a la que te sirva."
+          description="Mira las ofertas abiertas y postula a la que te sirva."
           action={
             <Button asChild size="sm">
               <Link to="/ofertas">Ver ofertas</Link>
