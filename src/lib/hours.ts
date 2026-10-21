@@ -26,3 +26,19 @@ export function summarizeHours(
     requiredHours > 0 ? Math.min(100 - approvedPct, (submittedHours / requiredHours) * 100) : 0
   return { approvedHours, submittedHours, requiredHours, approvedPct, submittedPct }
 }
+
+/**
+ * Promedio de horas de los días en que sí hubo registros (aprobados o enviados), no de todos los días del calendario.
+ * `null` si no hay ninguno: un 0 diría que se trabajó cero horas por día.
+ */
+export function averagePerRegisteredDay(logs: LocalHourLog[] | undefined): number | null {
+  const hoursByDay = new Map<string, number>()
+  for (const log of logs ?? []) {
+    if (log.status !== 'APPROVED' && log.status !== 'SUBMITTED') continue
+    const day = log.date.split('T')[0]
+    hoursByDay.set(day, (hoursByDay.get(day) ?? 0) + log.hours)
+  }
+  if (hoursByDay.size === 0) return null
+  const total = [...hoursByDay.values()].reduce((sum, hours) => sum + hours, 0)
+  return total / hoursByDay.size
+}
