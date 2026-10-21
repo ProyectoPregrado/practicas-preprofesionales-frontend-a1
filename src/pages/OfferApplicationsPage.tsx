@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   type ApplicationDecision,
@@ -14,6 +14,7 @@ import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Ledger } from '@/components/ledger/Ledger'
 import { parseLocalDate } from '@/lib/date'
+import { confirmar, exito } from '@/lib/notify'
 
 type DecisionState = 'interviewing' | 'accepting' | 'rejecting' | null
 
@@ -76,6 +77,8 @@ export function OfferApplicationsPage() {
 
   const [decisionState, setDecisionState] = useState<Record<number, DecisionState>>({})
   const [decisionError, setDecisionError] = useState<string | null>(null)
+  // Evita abrir dos preguntas (y decidir dos veces) con un doble clic mientras la confirmación está abierta.
+  const confirming = useRef(false)
 
   function refetchApplications() {
     return listApplicationsForOffer(offerId)
@@ -111,11 +114,12 @@ export function OfferApplicationsPage() {
     }
   }, [offerId])
 
-  async function decide(applicationId: number, status: ApplicationDecision, state: DecisionState) {
+  async function decide(applicationId: number, status: ApplicationDecision, state: DecisionState, successMessage?: string) {
     setDecisionError(null)
     setDecisionState((prev) => ({ ...prev, [applicationId]: state }))
     try {
       await decideApplication(applicationId, status)
+      if (successMessage) exito(successMessage)
       await refetchApplications()
     } catch (err) {
       if (err instanceof ApiError && err.statusCode === 403) {
@@ -156,7 +160,28 @@ export function OfferApplicationsPage() {
   }
 
   const occupied = acceptedCount(applications)
-  const remaining = offer.seats - occupied
+  const seats = offer.seats
+  const remaining = seats - occupied
+
+  // Aceptar consume un cupo y la decisión no se puede deshacer: se pide confirmación.
+  async function accept(application: OfferApplication) {
+    if (confirming.current) return
+    confirming.current = true
+    try {
+      const name = application.student.fullName
+      const accepted = await confirmar({
+        titulo: `¿Aceptar a ${name}?`,
+        texto:
+          remaining > 0
+            ? `Vas a ocupar un cupo: quedarán ${remaining - 1} de ${seats} cupos. Esta decisión no se puede deshacer.`
+            : 'Esta oferta ya tiene todos sus cupos ocupados; el servidor puede rechazar la aceptación. Esta decisión no se puede deshacer.',
+        confirmar: 'Sí, aceptar',
+      })
+      if (accepted) await decide(application.id, 'ACCEPTED', 'accepting', `Postulación de ${name} aceptada`)
+    } finally {
+      confirming.current = false
+    }
+  }
 
   return (
     <>
@@ -233,7 +258,7 @@ export function OfferApplicationsPage() {
                         <Button
                           type="button"
                           size="sm"
-                          onClick={() => decide(application.id, 'ACCEPTED', 'accepting')}
+                          onClick={() => accept(application)}
                           disabled={busy}
                         >
                           {state === 'accepting' ? 'Aceptando…' : 'Aceptar'}
