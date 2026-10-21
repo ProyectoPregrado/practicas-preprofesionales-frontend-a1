@@ -137,6 +137,9 @@ export function OfferApplicationsPage() {
       // UX-2: un aviso que la persona tiene que leer. El mensaje en línea quedaba arriba de la lista, fuera de
       // la vista de quien acaba de pulsar un botón más abajo. El aviso se espera: los botones siguen
       // deshabilitados hasta que se cierra.
+      // UX-10: un 400 significa que el estado ya cambió (la postulación ya fue decidida, la oferta se llenó): la lista
+      // que se ve está vieja, así que se recarga antes del aviso para que quede al día detrás de él.
+      if (err instanceof ApiError && err.statusCode === 400) await refetchApplications()
       await error(DECISION_FAILURE_TITLE[status], decisionErrorMessage(err))
     } finally {
       setDecisionState((prev) => ({ ...prev, [applicationId]: null }))

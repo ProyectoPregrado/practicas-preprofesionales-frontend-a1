@@ -6,6 +6,7 @@ import { ApiError, api } from '@/api/client'
 import * as authContext from '@/auth/AuthContext'
 import * as notify from '@/lib/notify'
 import { db } from '@/offline/db'
+import { syncNow } from '@/offline/sync/scheduler'
 import { ReviewHoursPage } from './ReviewHoursPage'
 
 vi.mock('@/api/client', async (importOriginal) => {
@@ -319,5 +320,40 @@ describe('ReviewHoursPage — confirmar y avisar (UX-4)', () => {
 
     closeNotice()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Aprobar' })).not.toBeDisabled())
+  })
+
+  // UX-10: si el servidor rechaza porque el registro ya no está pendiente (otra pestaña o el mismo tutor en otro
+  // equipo), la lista local está vieja: se vuelve a sincronizar para traer el estado real.
+  describe('re-sincronización tras un rechazo (UX-10)', () => {
+    it('ante un 400 (el registro ya no está pendiente) sincroniza y la fila deja de ofrecer Aprobar', async () => {
+      const user = userEvent.setup()
+      await seed()
+      vi.mocked(api).mockRejectedValue(new ApiError(400, 'solo se revisan registros en SUBMITTED'))
+      vi.mocked(syncNow).mockImplementationOnce(async () => {
+        await db.hourLogs.update(36, { status: 'APPROVED' })
+      })
+      renderPage()
+
+      await user.click(await screen.findByRole('button', { name: 'Aprobar' }))
+
+      await waitFor(() => expect(syncNow).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(notify.error).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Aprobar' })).toBeNull())
+    })
+
+    it.each([
+      ['un 403', new ApiError(403, 'x')],
+      ['un error que no es de la API', new TypeError('red')],
+    ])('con %s no sincroniza: no hay motivo para creer que el registro cambió', async (_caso, failure) => {
+      const user = userEvent.setup()
+      await seed()
+      vi.mocked(api).mockRejectedValue(failure)
+      renderPage()
+
+      await user.click(await screen.findByRole('button', { name: 'Aprobar' }))
+
+      await waitFor(() => expect(notify.error).toHaveBeenCalledTimes(1))
+      expect(syncNow).not.toHaveBeenCalled()
+    })
   })
 })

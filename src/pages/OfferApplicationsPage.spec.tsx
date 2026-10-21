@@ -304,5 +304,36 @@ describe('OfferApplicationsPage — confirmar al aceptar (UX-1)', () => {
       await waitFor(() => expect(notify.error).toHaveBeenCalled())
       await waitFor(() => expect(screen.getByRole('button', { name: 'Aceptar' })).not.toBeDisabled())
     })
+
+    // UX-10: si el servidor rechaza porque la postulación ya cambió (otra pestaña, otra persona), la lista que se ve
+    // está vieja: sin recargar, los botones siguen ahí hasta que se refresque a mano.
+    describe('recarga de la lista tras un rechazo (UX-10)', () => {
+      const decided = { ...(application as object), status: 'REJECTED', decidedAt: '2026-03-03' } as never
+
+      it('ante un 400 (la postulación ya fue decidida) recarga la lista y muestra su estado real', async () => {
+        vi.mocked(companiesApi.listApplicationsForOffer).mockResolvedValueOnce([application]).mockResolvedValue([decided])
+        vi.mocked(companiesApi.decideApplication).mockRejectedValue(new ApiError(400, 'la postulación ya fue decidida'))
+        renderPage()
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+        await waitFor(() => expect(companiesApi.listApplicationsForOffer).toHaveBeenCalledTimes(2))
+        await waitFor(() => expect(notify.error).toHaveBeenCalledTimes(1))
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'Aceptar' })).toBeNull())
+      })
+
+      it.each([
+        ['un 403', new ApiError(403, 'x')],
+        ['un error que no es de la API', new TypeError('red')],
+      ])('con %s no recarga: no hay motivo para creer que la lista cambió', async (_caso, failure) => {
+        vi.mocked(companiesApi.decideApplication).mockRejectedValue(failure)
+        renderPage()
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+        await waitFor(() => expect(notify.error).toHaveBeenCalledTimes(1))
+        expect(companiesApi.listApplicationsForOffer).toHaveBeenCalledTimes(1)
+      })
+    })
   })
 })
