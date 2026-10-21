@@ -46,7 +46,7 @@ function latestStatus(documents: LocalDocument[], kind: DocumentKind): string | 
 function RequiredStatus({ documents, kind }: { documents: LocalDocument[] | undefined; kind: DocumentKind }) {
   if (documents === undefined) return <span className="text-12 text-inkSoft">Cargando…</span>
   const status = latestStatus(documents, kind)
-  if (status) return <StatusBadge status={status} />
+  if (status) return <StatusBadge status={status} domain="document" />
   return <Chip tone="void">Falta subir</Chip>
 }
 
@@ -104,7 +104,7 @@ function DocumentsList({ documents }: { documents: LocalDocument[] | undefined }
                 <span className="font-data">{formatDate(doc.updatedAt)}</span>
               </div>
             </div>
-            <StatusBadge status={doc.status} />
+            <StatusBadge status={doc.status} domain="document" />
           </div>
         ))}
       </div>

@@ -116,7 +116,7 @@ function ReviewList({ logs, actionState, onApprove, onReject }: ReviewListProps)
             <span className="font-data text-14 text-ink sm:w-14">{log.hours}</span>
             <span className="flex-1 text-14 text-inkBody">{log.activity}</span>
             <span className="sm:w-32">
-              <StatusBadge status={log.status} />
+              <StatusBadge status={log.status} domain="hour" />
             </span>
             <span className="flex flex-wrap justify-end gap-1.5 sm:w-44">
               <ReviewActions

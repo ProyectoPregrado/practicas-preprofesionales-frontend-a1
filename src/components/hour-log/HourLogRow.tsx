@@ -51,7 +51,7 @@ export function HourLogRow({ log }: { log: LocalHourLog }) {
         )}
       </div>
       <div className="flex flex-col items-end gap-1 sm:w-32 sm:text-right">
-        <StatusBadge status={log.status} />
+        <StatusBadge status={log.status} domain="hour" />
         {log.syncState === 'failed' && <Chip tone="void">Fallo permanente</Chip>}
       </div>
     </LedgerRow>
