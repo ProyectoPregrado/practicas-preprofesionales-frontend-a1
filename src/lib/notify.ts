@@ -66,10 +66,13 @@ export async function exito(mensaje: string): Promise<void> {
   })
 }
 
+// El servidor responde sus mensajes en minúscula inicial («la oferta ya no tiene cupos»): se muestran como oración.
+const capitalizar = (texto: string): string => texto.charAt(0).toUpperCase() + texto.slice(1)
+
 export async function error(titulo: string, texto?: string): Promise<void> {
   await fire({
     title: titulo,
-    text: texto,
+    text: texto ? capitalizar(texto) : undefined,
     icon: 'error',
     confirmButtonText: 'Entendido',
     buttonsStyling: false,

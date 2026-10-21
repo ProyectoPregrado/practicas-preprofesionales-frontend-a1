@@ -14,9 +14,16 @@ import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Ledger } from '@/components/ledger/Ledger'
 import { parseLocalDate } from '@/lib/date'
-import { confirmar, exito } from '@/lib/notify'
+import { confirmar, error, exito } from '@/lib/notify'
 
 type DecisionState = 'interviewing' | 'accepting' | 'rejecting' | null
+
+// UX-2: el título del aviso dice qué acción falló.
+const DECISION_FAILURE_TITLE: Record<ApplicationDecision, string> = {
+  ACCEPTED: 'No se pudo aceptar la postulación',
+  REJECTED: 'No se pudo descartar la postulación',
+  INTERVIEW: 'No se pudo pasar la postulación a entrevista',
+}
 
 function formatDate(dateValue: string): string {
   const parsed = parseLocalDate(dateValue)
@@ -38,6 +45,13 @@ function ColumnHeader() {
       <span className="w-60 text-right">Acciones</span>
     </TableHeaderRow>
   )
+}
+
+function decisionErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.statusCode === 403) {
+    return 'No puedes decidir postulaciones de ofertas que pertenecen a otra empresa.'
+  }
+  return err instanceof ApiError ? err.message : 'No se pudo enviar la decisión'
 }
 
 // F-1b: un solo lugar para explicar los 403 y 404 de la carga; el resto muestra el mensaje del servidor.
@@ -76,7 +90,6 @@ export function OfferApplicationsPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const [decisionState, setDecisionState] = useState<Record<number, DecisionState>>({})
-  const [decisionError, setDecisionError] = useState<string | null>(null)
   // Evita abrir dos preguntas (y decidir dos veces) con un doble clic mientras la confirmación está abierta.
   const confirming = useRef(false)
 
@@ -115,18 +128,16 @@ export function OfferApplicationsPage() {
   }, [offerId])
 
   async function decide(applicationId: number, status: ApplicationDecision, state: DecisionState, successMessage?: string) {
-    setDecisionError(null)
     setDecisionState((prev) => ({ ...prev, [applicationId]: state }))
     try {
       await decideApplication(applicationId, status)
       if (successMessage) exito(successMessage)
       await refetchApplications()
     } catch (err) {
-      if (err instanceof ApiError && err.statusCode === 403) {
-        setDecisionError('No puedes decidir postulaciones de ofertas que pertenecen a otra empresa.')
-      } else {
-        setDecisionError(err instanceof ApiError ? err.message : 'No se pudo enviar la decisión')
-      }
+      // UX-2: un aviso que la persona tiene que leer. El mensaje en línea quedaba arriba de la lista, fuera de
+      // la vista de quien acaba de pulsar un botón más abajo. El aviso se espera: los botones siguen
+      // deshabilitados hasta que se cierra.
+      await error(DECISION_FAILURE_TITLE[status], decisionErrorMessage(err))
     } finally {
       setDecisionState((prev) => ({ ...prev, [applicationId]: null }))
     }
@@ -196,11 +207,6 @@ export function OfferApplicationsPage() {
         }
       />
 
-      {decisionError ? (
-        <p role="alert" className="rounded-lg bg-chipVoid px-4 py-3 text-13 text-void">
-          {decisionError}
-        </p>
-      ) : null}
 
       <Panel
         toolbar={

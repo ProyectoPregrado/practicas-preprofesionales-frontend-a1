@@ -230,4 +230,79 @@ describe('OfferApplicationsPage — confirmar al aceptar (UX-1)', () => {
     await waitFor(() => expect(companiesApi.decideApplication).toHaveBeenCalledWith(9, 'INTERVIEW'))
     expect(notify.confirmar).not.toHaveBeenCalled()
   })
+
+  // UX-2: el error del servidor salía en línea ARRIBA de la lista, fuera de la vista de quien está en el botón.
+  // Ahora se muestra en un aviso que la persona tiene que leer.
+  describe('cuando el servidor rechaza la decisión (UX-2)', () => {
+    beforeEach(() => {
+      vi.mocked(notify.confirmar).mockResolvedValue(true)
+      vi.mocked(notify.error).mockResolvedValue(undefined as never)
+    })
+
+    it.each([
+      ['un 400 del servidor, con su mensaje', new ApiError(400, 'la oferta ya no tiene cupos'), 'la oferta ya no tiene cupos'],
+      ['un 403 de otra empresa', new ApiError(403, 'x'), 'No puedes decidir postulaciones de ofertas que pertenecen a otra empresa.'],
+      ['un error que no es de la API, con el mensaje por defecto', new TypeError('red'), 'No se pudo enviar la decisión'],
+    ])('aceptar: con %s muestra un aviso de error y no un mensaje en línea', async (_caso, failure, texto) => {
+      vi.mocked(companiesApi.decideApplication).mockRejectedValue(failure)
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+      await waitFor(() => expect(notify.error).toHaveBeenCalledTimes(1))
+      expect(notify.error).toHaveBeenCalledWith('No se pudo aceptar la postulación', texto)
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(notify.exito).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['Descartar', 'No se pudo descartar la postulación'],
+      ['Entrevista', 'No se pudo pasar la postulación a entrevista'],
+    ])('%s: el título del aviso dice qué acción falló', async (boton, titulo) => {
+      vi.mocked(companiesApi.decideApplication).mockRejectedValue(new ApiError(400, 'la postulación ya fue decidida'))
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: boton }))
+
+      await waitFor(() => expect(notify.error).toHaveBeenCalledWith(titulo, 'la postulación ya fue decidida'))
+    })
+
+    it('si la decisión sale bien no se muestra ningún aviso de error', async () => {
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+      await waitFor(() => expect(notify.exito).toHaveBeenCalledTimes(1))
+      expect(notify.error).not.toHaveBeenCalled()
+    })
+
+    it('los botones siguen deshabilitados mientras el aviso de error está abierto y se habilitan al cerrarlo', async () => {
+      let closeNotice!: () => void
+      vi.mocked(notify.error).mockReturnValue(
+        new Promise<void>((resolve) => {
+          closeNotice = resolve
+        }),
+      )
+      vi.mocked(companiesApi.decideApplication).mockRejectedValue(new ApiError(400, 'la oferta ya no tiene cupos'))
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+      await waitFor(() => expect(notify.error).toHaveBeenCalled())
+      expect(screen.getByRole('button', { name: 'Aceptando…' })).toBeDisabled()
+
+      closeNotice()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Aceptar' })).not.toBeDisabled())
+    })
+
+    it('los botones se habilitan de nuevo cuando la persona cierra el aviso de error', async () => {
+      vi.mocked(companiesApi.decideApplication).mockRejectedValue(new ApiError(400, 'la oferta ya no tiene cupos'))
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+      await waitFor(() => expect(notify.error).toHaveBeenCalled())
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Aceptar' })).not.toBeDisabled())
+    })
+  })
 })

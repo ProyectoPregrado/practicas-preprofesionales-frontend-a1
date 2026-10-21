@@ -83,6 +83,22 @@ describe('notify', () => {
   })
 
   describe('error', () => {
+    it('empieza con mayúscula el texto del servidor, que llega en minúscula', async () => {
+      fire.mockResolvedValue({} as never)
+
+      await error('No se pudo aceptar', 'la oferta ya no tiene cupos')
+
+      expect(fire.mock.calls[0][0]).toMatchObject({ text: 'La oferta ya no tiene cupos' })
+    })
+
+    it('no inventa un texto cuando no hay detalle', async () => {
+      fire.mockResolvedValue({} as never)
+
+      await error('No se pudo aceptar')
+
+      expect((fire.mock.calls[0][0] as unknown as { text?: string }).text).toBeUndefined()
+    })
+
     it('muestra un modal de error que NO se cierra solo y pide una confirmación explícita', async () => {
       fire.mockResolvedValue({} as never)
 
