@@ -4,6 +4,9 @@ import { HourLogFilterBar } from '@/components/hour-log/HourLogFilterBar'
 import { HourLogRow } from '@/components/hour-log/HourLogRow'
 import { NewHourLogDialog } from '@/components/hour-log/NewHourLogDialog'
 import { PageHeader } from '@/components/PageHeader'
+import { ExportCsvButton } from '@/components/ExportCsvButton'
+import { csvFilename } from '@/lib/csv'
+import { hourLogTable } from '@/lib/exportTables'
 import { Pagination } from '@/components/Pagination'
 import { EmptyState, LoadingState, Panel } from '@/components/Panel'
 import { HoursLegend } from '@/components/placement/HoursLegend'
@@ -209,7 +212,16 @@ function HourLogBook({ placement, logs }: { placement: LocalPlacement; logs: Loc
       <PageHeader
         title="Libro de horas"
         subtitle="Todo lo que registraste este período. Se guarda en este dispositivo aunque no haya señal."
-        actions={<NewHourLogDialog placementId={placement.id} />}
+        actions={
+          <>
+            <ExportCsvButton
+              filename={csvFilename(['libro-de-horas'])}
+              rows={() => hourLogTable(filtered.slice().reverse())}
+              disabled={filtered.length === 0}
+            />
+            <NewHourLogDialog placementId={placement.id} />
+          </>
+        }
       />
 
       <ProgressCard hours={hours} />

@@ -4,6 +4,9 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/auth/AuthContext'
 import { Chip } from '@/components/Chip'
 import { PageHeader } from '@/components/PageHeader'
+import { ExportCsvButton } from '@/components/ExportCsvButton'
+import { csvFilename } from '@/lib/csv'
+import { studentQueueTable } from '@/lib/exportTables'
 import { Pagination } from '@/components/Pagination'
 import { usePagination } from '@/lib/usePagination'
 import { EmptyState, LoadingState, Panel, TableHeaderRow, rowClass } from '@/components/Panel'
@@ -79,6 +82,13 @@ export function MyStudentsPage() {
       <PageHeader
         title="Mis practicantes"
         subtitle="Ordenados por tu cola: primero quien tiene más horas esperando, luego quien va más atrasado."
+        actions={
+          <ExportCsvButton
+            filename={csvFilename(['mis-practicantes'])}
+            rows={() => studentQueueTable(rows)}
+            disabled={rows.length === 0}
+          />
+        }
       />
 
       {rows.length > 0 ? (
