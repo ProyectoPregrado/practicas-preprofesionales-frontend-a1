@@ -2,6 +2,7 @@ import { Download, ExternalLink, FileText } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { ApiError } from '@/api/client'
 import { fetchDocumentFile } from '@/api/documents'
+import { DocumentCheckPanel } from '@/components/ai/DocumentCheckPanel'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import {
@@ -115,6 +116,7 @@ export function DocumentViewer({ document, onClose }: DocumentViewerProps) {
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
+            <DocumentCheckPanel documentId={document.id} />
             <Preview state={state} document={document} />
           </DialogBody>
           {state.kind === 'ready' ? (

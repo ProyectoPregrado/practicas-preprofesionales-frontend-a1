@@ -1,9 +1,12 @@
-import { type FormEvent, useMemo, useRef, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Link, useParams } from 'react-router-dom'
+import type { ReviewHint } from '@/api/ai'
 import { ApiError, api } from '@/api/client'
 import { useAuth } from '@/auth/AuthContext'
 import { CalendarDays, Undo2 } from 'lucide-react'
+import { HintDot } from '@/components/ai/HintDot'
+import { ReviewAssistantBar, useReviewAssistant } from '@/components/ai/ReviewAssistantBar'
 import { FilterTabs } from '@/components/FilterTabs'
 import { PageHeader } from '@/components/PageHeader'
 import { ExportCsvButton } from '@/components/ExportCsvButton'
@@ -105,9 +108,32 @@ interface ReviewListProps {
   actionState: Record<number, ActionState>
   onApprove: (log: LocalHourLog) => void
   onReject: (log: LocalHourLog) => void
+  /** IA-1: el semáforo de la revisión asistida, por id de registro; vacío hasta que se analiza. */
+  hints: Map<number, ReviewHint>
 }
 
-function ReviewList({ logs, filtered, actionState, onApprove, onReject }: ReviewListProps) {
+/** La nota que propuso la revisión asistida para el registro que se va a devolver, si la hay. */
+function suggestedNoteFor(hints: Map<number, ReviewHint>, log: LocalHourLog | null): string | undefined {
+  return log ? hints.get(log.id)?.suggestedNote : undefined
+}
+
+/** La actividad y, si el registro sigue sin revisar y ya se analizó, su color y por qué. */
+function ActivityCell({ log, hint }: { log: LocalHourLog; hint: ReviewHint | undefined }) {
+  const showHint = hint && log.status === 'SUBMITTED'
+  return (
+    <span className="flex flex-1 flex-col gap-1 text-14 text-inkBody">
+      <span>{log.activity}</span>
+      {showHint ? (
+        <span className="flex flex-wrap items-center gap-1.5 text-12 text-inkSoft">
+          <HintDot level={hint.level} />
+          {hint.reasons.join(' ')}
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+function ReviewList({ logs, filtered, actionState, onApprove, onReject, hints }: ReviewListProps) {
   if (logs.length === 0 && filtered) {
     return <EmptyState title="Ningún registro con este estado" description="Elige «Todos» para ver el libro completo." />
   }
@@ -129,7 +155,7 @@ function ReviewList({ logs, filtered, actionState, onApprove, onReject }: Review
               {log.startTime}–{log.endTime}
             </span>
             <span className="font-data text-14 text-ink sm:w-14">{log.hours}</span>
-            <span className="flex-1 text-14 text-inkBody">{log.activity}</span>
+            <ActivityCell log={log} hint={hints.get(log.id)} />
             <span className="sm:w-32">
               <StatusBadge status={log.status} domain="hour" />
             </span>
@@ -152,11 +178,17 @@ interface RejectDialogProps {
   log: LocalHourLog | null
   onCancel: () => void
   onConfirm: (logId: number, note: string) => void
+  /** IA-1: nota de devolución que propuso la revisión asistida; el tutor la edita antes de enviar. */
+  suggestedNote?: string
 }
 
-function RejectDialog({ log, onCancel, onConfirm }: RejectDialogProps) {
+function RejectDialog({ log, onCancel, onConfirm, suggestedNote }: RejectDialogProps) {
   const [note, setNote] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (log) setNote(suggestedNote ?? '')
+  }, [log, suggestedNote])
 
   function handleOpenChange(open: boolean) {
     if (open) return
@@ -333,6 +365,8 @@ export function ReviewHoursPage() {
   const [rejectingLog, setRejectingLog] = useState<LocalHourLog | null>(null)
   // Evita abrir dos preguntas (y revisar dos veces) con un doble clic mientras la confirmación está abierta.
   const confirming = useRef(false)
+  const assistant = useReviewAssistant(placementId)
+  const [approvingMany, setApprovingMany] = useState(false)
 
   function getReviewErrorMessage(err: unknown): string {
     return (
@@ -342,7 +376,7 @@ export function ReviewHoursPage() {
     )
   }
 
-  async function reviewLog(logId: number, status: 'APPROVED' | 'REJECTED', note?: string) {
+  async function reviewLog(logId: number, status: 'APPROVED' | 'REJECTED', note?: string, quiet = false) {
     setActionState((prev) => ({ ...prev, [logId]: status === 'APPROVED' ? 'approving' : 'rejecting' }))
     try {
       await api(`/hour-logs/${logId}/review`, {
@@ -351,7 +385,7 @@ export function ReviewHoursPage() {
       })
       await syncNow()
       setActionState((prev) => ({ ...prev, [logId]: status === 'APPROVED' ? 'approved' : 'rejected' }))
-      exito(status === 'APPROVED' ? 'Horas aprobadas' : 'Registro devuelto al estudiante')
+      if (!quiet) exito(status === 'APPROVED' ? 'Horas aprobadas' : 'Registro devuelto al estudiante')
     } catch (err) {
       // UX-4: un aviso que la persona tiene que leer (el mensaje en línea quedaba arriba de la lista, fuera de la
       // vista). Se espera: los botones siguen deshabilitados hasta que se cierra.
@@ -381,6 +415,29 @@ export function ReviewHoursPage() {
       })
       if (accepted) await reviewLog(log.id, 'APPROVED')
     } finally {
+      confirming.current = false
+    }
+  }
+
+  // IA-1: aprobar de una vez lo que la revisión asistida marcó en verde. Una sola confirmación con el total; los
+  // registros se aprueban uno tras otro con la misma llamada de siempre (el servidor valida cada uno).
+  async function approveMany(logIds: number[]) {
+    if (confirming.current || !logs) return
+    confirming.current = true
+    try {
+      const selected = logs.filter((log) => logIds.includes(log.id) && log.status === 'SUBMITTED')
+      const total = selected.reduce((sum, log) => sum + log.hours, 0)
+      const accepted = await confirmar({
+        titulo: `¿Aprobar ${plural(selected.length, 'registro en verde', 'registros en verde')}?`,
+        texto: `Se suman ${total} h a las aprobadas. La revisión asistida no encontró problemas en estos registros. Esta decisión no se puede deshacer.`,
+        confirmar: 'Sí, aprobar todos',
+      })
+      if (!accepted) return
+      setApprovingMany(true)
+      for (const log of selected) await reviewLog(log.id, 'APPROVED', undefined, true)
+      exito(`${plural(selected.length, 'registro aprobado', 'registros aprobados')}`)
+    } finally {
+      setApprovingMany(false)
       confirming.current = false
     }
   }
@@ -453,6 +510,13 @@ export function ReviewHoursPage() {
 
       <ReviewKpis hours={hours} counts={counts} lastLogDate={logs.at(-1)?.date ?? null} />
 
+      <ReviewAssistantBar
+        assistant={assistant}
+        pendingIds={new Set(logs.filter((log) => log.status === 'SUBMITTED').map((log) => log.id))}
+        onApproveGreens={approveMany}
+        busy={approvingMany}
+      />
+
       <Panel
         toolbar={
           <>
@@ -475,6 +539,7 @@ export function ReviewHoursPage() {
           actionState={actionState}
           onApprove={approve}
           onReject={setRejectingLog}
+          hints={assistant.hints}
         />
         <div className="px-4 pb-4">
           <Pagination {...pagination} />
@@ -485,6 +550,7 @@ export function ReviewHoursPage() {
         log={rejectingLog}
         onCancel={() => setRejectingLog(null)}
         onConfirm={confirmReject}
+        suggestedNote={suggestedNoteFor(assistant.hints, rejectingLog)}
       />
     </>
   )
