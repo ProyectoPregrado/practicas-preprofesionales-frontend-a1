@@ -1,6 +1,5 @@
 import { type ChangeEvent, type FormEvent, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ApiError } from '@/api/client'
 import { uploadDocument } from '@/api/documents'
 import { Chip } from '@/components/Chip'
 import { DocumentList } from '@/components/documents/DocumentList'
@@ -10,6 +9,7 @@ import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { describeError } from '@/lib/describeError'
 import {
   ACCEPTED_DOCUMENT_TYPES,
   DOCUMENT_KIND_LABEL as KIND_LABEL,
@@ -17,6 +17,7 @@ import {
   documentFileError,
   formatFileSize,
 } from '@/lib/documentFiles'
+import { error as notifyError, exito } from '@/lib/notify'
 import { useOnline } from '@/offline/hooks/useOnline'
 import { db, type LocalDocument } from '@/offline/db'
 import { usePlacement } from '@/offline/hooks/usePlacement'
@@ -67,7 +68,7 @@ export function DocumentsPage() {
 
   const [kind, setKind] = useState<DocumentKind>('AGREEMENT')
   const [uploading, setUploading] = useState(false)
-  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
   const [file, setFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const online = useOnline()
@@ -85,27 +86,17 @@ export function DocumentsPage() {
     )
   }
 
-function getUploadErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.statusCode === 403) {
-    return 'No tienes permiso para subir documentos a esta práctica.'
-  }
-  if (err instanceof ApiError) {
-    return err.message
-  }
-  return 'No se pudo subir el documento'
-}
-
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setUploadError(null)
+    setFileError(null)
 
     if (!file) {
-      setUploadError('Selecciona un archivo')
+      setFileError('Selecciona un archivo')
       return
     }
-    const fileError = documentFileError(file)
-    if (fileError) {
-      setUploadError(fileError)
+    const problem = documentFileError(file)
+    if (problem) {
+      setFileError(problem)
       return
     }
 
@@ -115,8 +106,14 @@ function getUploadErrorMessage(err: unknown): string {
       await db.documents.put(created)
       setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
+      // Sin `await`: se cierra solo y no debe dejar el botón en «Subiendo…». Desde DOC-1 el servidor guarda el
+      // archivo, así que ya se puede decir «subido».
+      exito(`Documento «${file.name}» subido`)
     } catch (err) {
-      setUploadError(getUploadErrorMessage(err))
+      await notifyError(
+        'No se pudo subir el documento',
+        describeError(err, { forbidden: 'No tienes permiso para subir documentos a esta práctica.' }),
+      )
     } finally {
       setUploading(false)
     }
@@ -125,7 +122,7 @@ function getUploadErrorMessage(err: unknown): string {
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const chosen = event.target.files?.[0] ?? null
     setFile(chosen)
-    setUploadError(chosen ? documentFileError(chosen) : null)
+    setFileError(chosen ? documentFileError(chosen) : null)
   }
 
   return (
@@ -173,9 +170,9 @@ function getUploadErrorMessage(err: unknown): string {
             </div>
           </div>
 
-          {uploadError ? (
+          {fileError ? (
             <p role="alert" className="rounded-md bg-chipVoid px-3 py-2.5 text-13 text-void">
-              {uploadError}
+              {fileError}
             </p>
           ) : null}
 

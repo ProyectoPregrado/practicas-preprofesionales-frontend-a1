@@ -7,6 +7,7 @@ import {
   todayAsInputValue,
 } from '@/lib/hourLogHelpers'
 import { persistHourLog } from '@/lib/hourLogPersistence'
+import { exito } from '@/lib/notify'
 import {
   MAX_HOURS_PER_DAY,
   getDailyRegisteredHours,
@@ -17,6 +18,10 @@ import {
 import { db } from '@/offline/db'
 
 export type { FormErrors }
+
+// El registro queda en el dispositivo y en la cola de sincronización: el servidor aún no lo tiene, así que el aviso
+// nunca dice «enviado», con o sin conexión.
+const SAVED_NOTICE = 'Guardado en este dispositivo. Se sincronizará con el servidor en cuanto haya conexión.'
 
 export interface UseHourLogFormOptions {
   placementId: number
@@ -89,6 +94,8 @@ export function useHourLogForm({ placementId, onSaved }: UseHourLogFormOptions) 
         activity,
       })
       resetForm()
+      // Sin `await`: el aviso se cierra solo a los 3 s y no debe dejar el botón en «Guardando…».
+      exito(SAVED_NOTICE)
       onSaved?.()
     } catch (err) {
       if (err instanceof Error && err.message === 'DAILY_LIMIT_EXCEEDED') {
