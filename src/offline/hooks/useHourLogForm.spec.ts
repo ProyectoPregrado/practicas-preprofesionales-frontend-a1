@@ -4,6 +4,8 @@ import * as hourLogPersistence from '@/lib/hourLogPersistence'
 import { db, type LocalHourLog } from '@/offline/db'
 import { useHourLogForm } from './useHourLogForm'
 
+vi.mock('@/lib/notify')
+
 describe('useHourLogForm (E6-04)', () => {
   const placementId = 42
 
