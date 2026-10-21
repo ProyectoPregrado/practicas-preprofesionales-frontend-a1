@@ -1,17 +1,8 @@
 import { GraduationCap, Zap } from 'lucide-react'
 import { ProgressBar } from '@/components/ProgressBar'
 import type { HoursSummary } from '@/lib/hours'
-import { cn, plural } from '@/lib/utils'
-
-function LegendItem({ dot, value, label }: { dot: string; value: string; label: string }) {
-  return (
-    <li className="flex items-center gap-1.5 text-12">
-      <span aria-hidden="true" className={cn('size-3 flex-none rounded-full', dot)} />
-      <span className="font-semibold text-ink">{value}</span>
-      <span className="text-inkSoft">{label}</span>
-    </li>
-  )
-}
+import { plural } from '@/lib/utils'
+import { HoursLegend } from './HoursLegend'
 
 function SideCard({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -31,7 +22,6 @@ interface HoursHeroCardProps {
 export function HoursHeroCard({ hours, pendingDocuments }: HoursHeroCardProps) {
   const { approvedHours, submittedHours, requiredHours, approvedPct, submittedPct } = hours
   const remaining = Math.max(0, requiredHours - approvedHours)
-  const toRegister = Math.max(0, requiredHours - approvedHours - submittedHours)
 
   return (
     <section className="relative overflow-hidden rounded-2xl bg-surface p-6 shadow-[0_4px_24px_hsl(var(--scrim)/0.07)] lg:p-7">
@@ -75,11 +65,7 @@ export function HoursHeroCard({ hours, pendingDocuments }: HoursHeroCardProps) {
             pendingValue={submittedPct}
             label="Progreso de horas aprobadas"
           />
-          <ul aria-label="Reparto de las horas" className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5">
-            <LegendItem dot="bg-stamp" value={`${approvedHours.toFixed(1)} h`} label="aprobadas" />
-            <LegendItem dot="bg-dotPending" value={`${submittedHours.toFixed(1)} h`} label="sin revisar" />
-            <LegendItem dot="bg-line" value={`${toRegister.toFixed(1)} h`} label="por registrar" />
-          </ul>
+          <HoursLegend className="mt-3" hours={hours} />
         </div>
 
         <div className="grid gap-2.5 sm:grid-cols-2 xl:w-[260px] xl:grid-cols-1">

@@ -1,27 +1,21 @@
 import { useMemo, useState } from 'react'
-import { Chip } from '@/components/Chip'
-import { HourLogForm } from '@/components/HourLogForm'
-import { HoursProgressPanel } from '@/components/HoursProgressPanel'
+import { BookOpen, CalendarDays, CheckCircle2, CircleCheckBig, CloudUpload, Hourglass, PieChart, TriangleAlert } from 'lucide-react'
+import { HourLogFilterBar } from '@/components/hour-log/HourLogFilterBar'
+import { HourLogRow } from '@/components/hour-log/HourLogRow'
+import { NewHourLogDialog } from '@/components/hour-log/NewHourLogDialog'
 import { PageHeader } from '@/components/PageHeader'
 import { Pagination } from '@/components/Pagination'
 import { EmptyState, LoadingState, Panel } from '@/components/Panel'
-import { StatusBadge } from '@/components/StatusBadge'
+import { HoursLegend } from '@/components/placement/HoursLegend'
+import { KpiCard } from '@/components/placement/KpiCard'
+import { ProgressBar } from '@/components/ProgressBar'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
 import { Ledger, LedgerHeaderRow } from '@/components/ledger/Ledger'
-import { LedgerRow } from '@/components/ledger/LedgerRow'
 import { parseLocalDate } from '@/lib/date'
-import { type HoursSummary, summarizeHours } from '@/lib/hours'
+import { type HoursSummary, averagePerRegisteredDay, summarizeHours } from '@/lib/hours'
+import { NO_FILTERS, countByStatus, filterHourLogs, monthsOf } from '@/lib/hourLogFilters'
 import { plural } from '@/lib/utils'
-import type { LocalHourLog } from '@/offline/db'
+import type { LocalHourLog, LocalPlacement } from '@/offline/db'
 import { useHourLogs } from '@/offline/hooks/useHourLogs'
 import { usePlacement } from '@/offline/hooks/usePlacement'
 
@@ -39,9 +33,9 @@ function formatDate(dateValue: string): string {
 function LedgerColumnHeader() {
   return (
     <LedgerHeaderRow>
-      <span className="w-28">Fecha</span>
+      <span className="w-32">Fecha</span>
       <span className="w-28">Horario</span>
-      <span className="w-14">Horas</span>
+      <span className="w-20">Horas</span>
       <span className="flex-1">Actividad</span>
       <span className="w-32 text-right">Estado</span>
     </LedgerHeaderRow>
@@ -53,74 +47,210 @@ function submittedNote(hours: HoursSummary) {
   return <span className="text-pending"> · {hours.submittedHours.toFixed(1)} sin aprobar</span>
 }
 
-function HourLogsList({ logs, totalCount }: { logs: LocalHourLog[]; totalCount: number }) {
-  if (totalCount === 0) {
-    return (
-      <EmptyState
-        title="Todavía no has registrado horas"
-        description="Puedes hacerlo sin conexión: se sincroniza cuando vuelva la señal."
-      />
-    )
-  }
-
+/** Tarjeta de progreso del libro: meta, contador, barra y reparto de las horas (siempre sobre todos los registros). */
+function ProgressCard({ hours }: { hours: HoursSummary }) {
   return (
-    <Ledger header={<LedgerColumnHeader />}>
-      {logs.map((log) => (
-        <LedgerRow key={log.id} syncState={log.syncState}>
-          <span className="font-data text-14 text-ink sm:w-28">{formatDate(log.date)}</span>
-          <span className="font-data text-13 text-inkSoft sm:w-28">
-            {log.startTime}–{log.endTime}
-          </span>
-          <span className="font-data text-14 text-ink sm:w-14">{log.hours}</span>
-          <div className="flex-1 text-14 text-inkBody">
-            <div>{log.activity}</div>
-            {log.syncState === 'failed' && (
-              <div className="mt-0.5 text-12 font-medium text-void">
-                Fallo permanente: {log.reviewNote || 'Error en la sincronización'}
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col items-end gap-1 sm:w-32 sm:text-right">
-            <StatusBadge status={log.status} />
-            {log.syncState === 'failed' && (
-              <Chip tone="void">Fallo permanente</Chip>
-            )}
-          </div>
-        </LedgerRow>
-      ))}
-    </Ledger>
+    <section
+      aria-label="Progreso del ciclo práctico"
+      className="rounded-2xl bg-surface p-5 shadow-[0_4px_20px_hsl(var(--scrim)/0.06)]"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+        <div>
+          <h2 className="flex items-center gap-2 font-display text-16 font-bold text-ink">
+            <PieChart aria-hidden="true" className="size-5 text-stamp" />
+            Progreso del ciclo práctico
+          </h2>
+          <span className="text-12 text-inkSoft">Meta: {hours.requiredHours} horas</span>
+        </div>
+        <p className="font-data text-13 text-inkSoft">
+          {hours.approvedHours.toFixed(1)} / {hours.requiredHours} aprobadas
+          {submittedNote(hours)}
+        </p>
+      </div>
+      <ProgressBar
+        className="mt-4"
+        size="lg"
+        value={hours.approvedPct}
+        pendingValue={hours.submittedPct}
+        label="Progreso de horas aprobadas"
+      />
+      <HoursLegend className="mt-3" hours={hours} />
+    </section>
   )
 }
 
-function NewHourLogDialog({ placementId }: { placementId: number }) {
-  const [open, setOpen] = useState(false)
+/** Del primer al último día con registros, p. ej. «Del 30 mar 2026 al 10 abr 2026». */
+function rangeNote(logs: LocalHourLog[]): string {
+  if (logs.length === 0) return 'Aún sin registros'
+  const days = logs.map((log) => log.date.split('T')[0]).sort()
+  return `Del ${formatDate(days[0])} al ${formatDate(days[days.length - 1])}`
+}
+
+function BookKpis({ logs, hours }: { logs: LocalHourLog[]; hours: HoursSummary }) {
+  const approvedCount = logs.filter((log) => log.status === 'APPROVED').length
+  const submittedCount = logs.filter((log) => log.status === 'SUBMITTED').length
+  const average = averagePerRegisteredDay(logs)
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button type="button">Registrar horas</Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Registrar horas</DialogTitle>
-          <DialogDescription>
-            Se guardan en este dispositivo y se sincronizan cuando haya conexión
-          </DialogDescription>
-        </DialogHeader>
-        <DialogBody>
-          <HourLogForm placementId={placementId} onSaved={() => setOpen(false)} />
-        </DialogBody>
-      </DialogContent>
-    </Dialog>
+    <ul aria-label="Indicadores" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <KpiCard
+        label="Horas aprobadas"
+        value={hours.approvedHours.toFixed(1)}
+        unit={`/ ${hours.requiredHours} h`}
+        icon={CheckCircle2}
+        footnote={plural(approvedCount, 'registro aprobado', 'registros aprobados')}
+      />
+      <KpiCard
+        label="En revisión"
+        value={hours.submittedHours.toFixed(1)}
+        unit="h"
+        icon={Hourglass}
+        tone="pending"
+        footnote={
+          <>
+            <span className="rounded-full bg-chipPending px-2 py-0.5 text-11 font-semibold text-pending">
+              {plural(submittedCount, 'registro', 'registros')}
+            </span>
+            <span>con tu tutor</span>
+          </>
+        }
+      />
+      <KpiCard
+        label="Registros"
+        value={String(logs.length)}
+        unit="en el libro"
+        icon={BookOpen}
+        tone="soft"
+        footnote={rangeNote(logs)}
+      />
+      <KpiCard
+        label="Promedio diario"
+        value={average === null ? '—' : average.toFixed(1)}
+        unit="h"
+        icon={CalendarDays}
+        tone="soft"
+        footnote={average === null ? 'Aún sin registros' : 'por día registrado'}
+      />
+    </ul>
+  )
+}
+
+/** Cuántos registros esperan salir del dispositivo y cuántos fallaron para siempre; si no hay ninguno, lo dice. */
+function SyncBanner({ logs }: { logs: LocalHourLog[] }) {
+  const waiting = logs.filter((log) => log.syncState === 'local' || log.syncState === 'queued').length
+  const failed = logs.filter((log) => log.syncState === 'failed').length
+  const upToDate = waiting === 0 && failed === 0
+  const Icon = upToDate ? CircleCheckBig : CloudUpload
+
+  return (
+    <div className="flex items-center gap-3 rounded-2xl bg-well p-4">
+      <span aria-hidden="true" className="flex size-10 flex-none items-center justify-center rounded-xl bg-chipPending text-pending">
+        <Icon className="size-5" />
+      </span>
+      <div className="min-w-0 text-13">
+        <p className="font-semibold text-ink">
+          {waiting > 0 ? `${plural(waiting, 'registro espera', 'registros esperan')} sincronizarse con el servidor` : null}
+          {upToDate ? 'Todos tus registros están sincronizados' : null}
+        </p>
+        {failed > 0 ? (
+          <p className="flex items-center gap-1.5 font-medium text-void">
+            <TriangleAlert aria-hidden="true" className="size-4" />
+            {plural(failed, 'registro con fallo permanente', 'registros con fallo permanente')}
+          </p>
+        ) : null}
+        <p className="text-inkSoft">Puedes registrar horas sin conexión: se envían cuando vuelva la señal.</p>
+      </div>
+    </div>
+  )
+}
+
+function EmptyBook() {
+  return (
+    <EmptyState
+      title="Todavía no has registrado horas"
+      description="Puedes hacerlo sin conexión: se sincroniza cuando vuelva la señal."
+    />
+  )
+}
+
+function NoMatches({ onClear }: { onClear: () => void }) {
+  return (
+    <EmptyState
+      title="Ningún registro coincide con los filtros"
+      description="Prueba con otra palabra, otro estado u otro mes."
+      action={
+        <Button type="button" size="sm" variant="outline" onClick={onClear}>
+          Quitar filtros
+        </Button>
+      }
+    />
+  )
+}
+
+/** El libro ya cargado: el estado de los filtros y la página vive aquí, no en la pantalla que espera los datos. */
+function HourLogBook({ placement, logs }: { placement: LocalPlacement; logs: LocalHourLog[] }) {
+  const [filters, setFilters] = useState(NO_FILTERS)
+  const [page, setPage] = useState(1)
+  // Más recientes primero; el hook los entrega de más antiguo a más reciente.
+  const sortedLogs = useMemo(() => logs.slice().reverse(), [logs])
+  const filtered = useMemo(() => filterHourLogs(sortedLogs, filters), [sortedLogs, filters])
+
+  // Totales recalculados en cada render a propósito: no hace falta más que sumar un arreglo.
+  const hours = summarizeHours(logs, placement.requiredHours)
+
+  // Paginación con límite de 10 registros por página para mantener fluidez con 500+ registros
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const currentPage = Math.min(page, pageCount)
+  const visibleLogs = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  function changeFilters(next: typeof filters) {
+    setFilters(next)
+    setPage(1)
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="Libro de horas"
+        subtitle="Todo lo que registraste este período. Se guarda en este dispositivo aunque no haya señal."
+        actions={<NewHourLogDialog placementId={placement.id} />}
+      />
+
+      <ProgressCard hours={hours} />
+      <BookKpis logs={logs} hours={hours} />
+
+      <HourLogFilterBar filters={filters} counts={countByStatus(logs)} months={monthsOf(logs)} onChange={changeFilters} />
+
+      <Panel
+        className="shadow-[0_4px_24px_hsl(var(--scrim)/0.06)]"
+        toolbar={
+          <span data-testid="table-count" className="ml-auto font-data text-12 text-inkSoft">
+            {plural(filtered.length, 'registro', 'registros')}
+          </span>
+        }
+      >
+        {logs.length === 0 ? <EmptyBook /> : null}
+        {logs.length > 0 && filtered.length === 0 ? <NoMatches onClear={() => changeFilters(NO_FILTERS)} /> : null}
+        {filtered.length > 0 ? (
+          <Ledger header={<LedgerColumnHeader />}>
+            {visibleLogs.map((log) => (
+              <HourLogRow key={log.id} log={log} />
+            ))}
+          </Ledger>
+        ) : null}
+        <div className="px-4 pb-4">
+          <Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} />
+        </div>
+      </Panel>
+
+      <SyncBanner logs={logs} />
+    </>
   )
 }
 
 export function HourLogsPage() {
   const placement = usePlacement()
   const logs = useHourLogs(placement?.id ?? -1)
-  const [page, setPage] = useState(1)
-  // Antes de los return tempranos: los hooks se llaman siempre en el mismo orden (mientras carga, logs es undefined).
-  const sortedLogs = useMemo(() => (logs ? logs.slice().reverse() : []), [logs])
 
   if (placement === undefined) {
     return <LoadingState>Cargando tu práctica…</LoadingState>
@@ -139,35 +269,5 @@ export function HourLogsPage() {
     return <LoadingState>Cargando registros de horas…</LoadingState>
   }
 
-  // Totales recalculados en cada render a propósito: con esta pantalla no
-  // hace falta más que sumar un arreglo, así que no se envuelve en useMemo.
-  const hours = summarizeHours(logs, placement.requiredHours)
-
-  // Paginación con límite de 10 registros por página para mantener fluidez con 500+ registros
-  const pageCount = Math.max(1, Math.ceil(sortedLogs.length / PAGE_SIZE))
-  const currentPage = Math.min(page, pageCount)
-  const visibleLogs = sortedLogs.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
-
-  return (
-    <>
-      <PageHeader
-        title="Libro de horas"
-        subtitle="Todo lo que registraste este período. Se guarda en este dispositivo aunque no haya señal."
-        actions={<NewHourLogDialog placementId={placement.id} />}
-      />
-
-      <HoursProgressPanel hours={hours} note={submittedNote(hours)} />
-
-      <Panel
-        toolbar={
-          <span className="ml-auto font-data text-12 text-inkSoft">
-            {plural(logs.length, 'registro', 'registros')}
-          </span>
-        }
-      >
-        <HourLogsList logs={visibleLogs} totalCount={logs.length} />
-        <Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} />
-      </Panel>
-    </>
-  )
+  return <HourLogBook placement={placement} logs={logs} />
 }

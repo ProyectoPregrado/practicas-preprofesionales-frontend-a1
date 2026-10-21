@@ -4,12 +4,12 @@ import { Link } from 'react-router-dom'
 import { Chip } from '@/components/Chip'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, LoadingState, Section } from '@/components/Panel'
+import { NewHourLogDialog } from '@/components/hour-log/NewHourLogDialog'
 import { HoursHeroCard } from '@/components/placement/HoursHeroCard'
 import { KpiCard } from '@/components/placement/KpiCard'
 import { RequirementsList } from '@/components/placement/RequirementsList'
 import { WeeklyHoursChart } from '@/components/placement/WeeklyHoursChart'
 import { StatusBadge } from '@/components/StatusBadge'
-import { Button } from '@/components/ui/button'
 import { Ledger } from '@/components/ledger/Ledger'
 import { LedgerRow } from '@/components/ledger/LedgerRow'
 import { parseLocalDate } from '@/lib/date'
@@ -236,11 +236,7 @@ export function MyPlacementPage() {
       <PageHeader
         title="Mi práctica"
         subtitle={`Empresa #${placement.companyId} · ${formatPeriod(placement.startDate, placement.endDate)}`}
-        actions={
-          <Button asChild>
-            <Link to="/horas">Registrar horas</Link>
-          </Button>
-        }
+        actions={<NewHourLogDialog placementId={placement.id} />}
       />
 
       <HoursHeroCard hours={hours} pendingDocuments={pendingDocuments} />
