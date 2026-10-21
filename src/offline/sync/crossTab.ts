@@ -8,10 +8,33 @@ export interface CrossTabMessage<T = unknown> {
 export type CrossTabListener<T = unknown> = (msg: CrossTabMessage<T>) => void
 
 export function generateTabId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
+  if (typeof crypto !== 'undefined') {
+    if (typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID()
+    }
+    if (typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(8)
+      crypto.getRandomValues(bytes)
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+      return `tab_${hex}_${Date.now()}`
+    }
   }
-  return `tab_${Math.random().toString(36).slice(2, 9)}_${Date.now()}`
+  return `tab_${Date.now()}`
+}
+
+function resolveBroadcastChannelClass(forceStorageFallback: boolean): (new (name: string) => BroadcastChannel) | null {
+  if (forceStorageFallback) return null
+  if (typeof window !== 'undefined' && window.BroadcastChannel) {
+    return window.BroadcastChannel
+  }
+  if (typeof BroadcastChannel !== 'undefined') {
+    return BroadcastChannel
+  }
+  if (typeof globalThis !== 'undefined') {
+    const globalBC = (globalThis as unknown as { BroadcastChannel?: typeof BroadcastChannel }).BroadcastChannel
+    if (globalBC) return globalBC
+  }
+  return null
 }
 
 export class CrossTabChannel<T = unknown> {
@@ -27,36 +50,39 @@ export class CrossTabChannel<T = unknown> {
     this.tabId = tabId
     this.storageKey = `__cross_tab_${name}__`
 
-    const BC = !forceStorageFallback
-      ? (typeof window !== 'undefined' && window.BroadcastChannel) ||
-        (typeof BroadcastChannel !== 'undefined' && BroadcastChannel) ||
-        (typeof globalThis !== 'undefined' &&
-          (globalThis as unknown as { BroadcastChannel?: typeof BroadcastChannel }).BroadcastChannel)
-      : null
-
+    const BC = resolveBroadcastChannelClass(forceStorageFallback)
     if (BC) {
-      this.channel = new BC(name)
-      this.channel.onmessage = (event: MessageEvent) => {
-        const data = event.data as CrossTabMessage<T> | undefined
-        if (data && data.senderId !== this.tabId) {
-          this.notify(data)
-        }
-      }
-    } else if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-      this.storageListener = (event: StorageEvent) => {
-        if (event.key === this.storageKey && event.newValue) {
-          try {
-            const data = JSON.parse(event.newValue) as CrossTabMessage<T>
-            if (data && data.senderId !== this.tabId) {
-              this.notify(data)
-            }
-          } catch {
-            // Ignora errores al parsear mensaje de storage
-          }
-        }
-      }
-      window.addEventListener('storage', this.storageListener)
+      this.initBroadcastChannel(BC)
+    } else {
+      this.initStorageFallback()
     }
+  }
+
+  private initBroadcastChannel(BC: new (name: string) => BroadcastChannel): void {
+    this.channel = new BC(this.name)
+    this.channel.onmessage = (event: MessageEvent) => {
+      const data = event.data as CrossTabMessage<T> | undefined
+      if (data && data.senderId !== this.tabId) {
+        this.notify(data)
+      }
+    }
+  }
+
+  private initStorageFallback(): void {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
+    this.storageListener = (event: StorageEvent) => {
+      if (event.key === this.storageKey && event.newValue) {
+        try {
+          const data = JSON.parse(event.newValue) as CrossTabMessage<T>
+          if (data && data.senderId !== this.tabId) {
+            this.notify(data)
+          }
+        } catch {
+          // Ignora errores al parsear mensaje de storage
+        }
+      }
+    }
+    window.addEventListener('storage', this.storageListener)
   }
 
   postMessage(type: string, payload?: T): void {

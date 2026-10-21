@@ -51,6 +51,48 @@ export function MyApplicationsPage() {
     }
   }, [])
 
+  function renderContent() {
+    if (error) {
+      return <ErrorState>{error}</ErrorState>
+    }
+    if (applications === undefined) {
+      return <LoadingState>Cargando postulaciones…</LoadingState>
+    }
+    if (applications.length === 0) {
+      return (
+        <EmptyState
+          title="Todavía no has postulado a ninguna oferta"
+          description="Mirá las ofertas abiertas y postulá a la que te sirva."
+          action={
+            <Button asChild size="sm">
+              <Link to="/ofertas">Ver ofertas</Link>
+            </Button>
+          }
+        />
+      )
+    }
+    return (
+      <Ledger header={<ColumnHeader />}>
+        {applications.map((application) => (
+          <Link key={application.id} to={`/ofertas/${application.offerId}`} className={rowClass}>
+            <span className="text-14 text-inkBody sm:w-40">
+              {application.offer.company.name}
+            </span>
+            <span className="flex-1 text-14 font-semibold text-ink">
+              {application.offer.title}
+            </span>
+            <span className="font-data text-13 text-inkSoft sm:w-32">
+              {formatDate(application.submittedAt)}
+            </span>
+            <span className="sm:w-32 sm:text-right">
+              <StatusBadge status={application.status} />
+            </span>
+          </Link>
+        ))}
+      </Ledger>
+    )
+  }
+
   return (
     <>
       <PageHeader
@@ -69,40 +111,7 @@ export function MyApplicationsPage() {
           ) : undefined
         }
       >
-        {error ? (
-          <ErrorState>{error}</ErrorState>
-        ) : applications === undefined ? (
-          <LoadingState>Cargando postulaciones…</LoadingState>
-        ) : applications.length === 0 ? (
-          <EmptyState
-            title="Todavía no has postulado a ninguna oferta"
-            description="Mirá las ofertas abiertas y postulá a la que te sirva."
-            action={
-              <Button asChild size="sm">
-                <Link to="/ofertas">Ver ofertas</Link>
-              </Button>
-            }
-          />
-        ) : (
-          <Ledger header={<ColumnHeader />}>
-            {applications.map((application) => (
-              <Link key={application.id} to={`/ofertas/${application.offerId}`} className={rowClass}>
-                <span className="text-14 text-inkBody sm:w-40">
-                  {application.offer.company.name}
-                </span>
-                <span className="flex-1 text-14 font-semibold text-ink">
-                  {application.offer.title}
-                </span>
-                <span className="font-data text-13 text-inkSoft sm:w-32">
-                  {formatDate(application.submittedAt)}
-                </span>
-                <span className="sm:w-32 sm:text-right">
-                  <StatusBadge status={application.status} />
-                </span>
-              </Link>
-            ))}
-          </Ledger>
-        )}
+        {renderContent()}
       </Panel>
     </>
   )

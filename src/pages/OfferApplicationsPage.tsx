@@ -39,6 +39,15 @@ function ColumnHeader() {
   )
 }
 
+// F-1b: un solo lugar para explicar los 403 y 404 de la carga; el resto muestra el mensaje del servidor.
+function loadErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError && err.statusCode === 403) {
+    return 'No tienes permiso para ver las postulaciones de esta oferta porque no pertenece a tu empresa.'
+  }
+  if (err instanceof ApiError && err.statusCode === 404) return 'Esta oferta no existe o no está disponible.'
+  return err instanceof ApiError ? err.message : fallback
+}
+
 function BackLink() {
   return (
     <Link
@@ -72,13 +81,7 @@ export function OfferApplicationsPage() {
     return listApplicationsForOffer(offerId)
       .then((data) => setApplications(data))
       .catch((err) => {
-        if (err instanceof ApiError && err.statusCode === 403) {
-          setLoadError('No tienes permiso para ver las postulaciones de esta oferta porque no pertenece a tu empresa.')
-        } else if (err instanceof ApiError && err.statusCode === 404) {
-          setLoadError('Esta oferta no existe o no está disponible.')
-        } else {
-          setLoadError(err instanceof ApiError ? err.message : 'No se pudieron cargar las postulaciones')
-        }
+        setLoadError(loadErrorMessage(err, 'No se pudieron cargar las postulaciones'))
       })
   }
 
@@ -91,13 +94,7 @@ export function OfferApplicationsPage() {
       .catch((err) => {
         if (!cancelled) {
           setOffer(null)
-          if (err instanceof ApiError && err.statusCode === 403) {
-            setLoadError('No tienes permiso para ver las postulaciones de esta oferta porque no pertenece a tu empresa.')
-          } else if (err instanceof ApiError && err.statusCode === 404) {
-            setLoadError('Esta oferta no existe o no está disponible.')
-          } else {
-            setLoadError(err instanceof ApiError ? err.message : 'No se pudo cargar la oferta')
-          }
+          setLoadError(loadErrorMessage(err, 'No se pudo cargar la oferta'))
         }
       })
     listApplicationsForOffer(offerId)
@@ -106,13 +103,7 @@ export function OfferApplicationsPage() {
       })
       .catch((err) => {
         if (!cancelled) {
-          if (err instanceof ApiError && err.statusCode === 403) {
-            setLoadError('No tienes permiso para ver las postulaciones de esta oferta porque no pertenece a tu empresa.')
-          } else if (err instanceof ApiError && err.statusCode === 404) {
-            setLoadError('Esta oferta no existe o no está disponible.')
-          } else {
-            setLoadError(err instanceof ApiError ? err.message : 'No se pudieron cargar las postulaciones')
-          }
+          setLoadError(loadErrorMessage(err, 'No se pudieron cargar las postulaciones'))
         }
       })
     return () => {

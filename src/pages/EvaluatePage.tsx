@@ -93,6 +93,16 @@ export function EvaluatePage() {
 
   const period = periodFromStartDate(placement.startDate)
 
+function getEvaluateErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.statusCode === 403) {
+    return 'No tienes permiso para evaluar esta práctica porque no eres el tutor asignado.'
+  }
+  if (err instanceof ApiError) {
+    return err.message
+  }
+  return 'No se pudo enviar la evaluación'
+}
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setSubmitError(null)
@@ -119,13 +129,7 @@ export function EvaluatePage() {
       })
       setSubmitted(true)
     } catch (err) {
-      const msg =
-        err instanceof ApiError && err.statusCode === 403
-          ? 'No tienes permiso para evaluar esta práctica porque no eres el tutor asignado.'
-          : err instanceof ApiError
-            ? err.message
-            : 'No se pudo enviar la evaluación'
-      setSubmitError(msg)
+      setSubmitError(getEvaluateErrorMessage(err))
     } finally {
       setSubmitting(false)
     }

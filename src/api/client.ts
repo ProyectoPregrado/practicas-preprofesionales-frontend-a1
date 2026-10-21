@@ -57,12 +57,28 @@ export class RefreshUnavailableError extends Error {
   }
 }
 
+// T-1b: el single-flight de abajo es por pestaña y el refresh token rota. Dos pestañas que renuevan a la
+// vez enviarían el mismo token: una gana y la otra recibe 401, y ese 401 cerraría una sesión válida.
+// Web Locks serializa la renovación entre pestañas.
+// shortcut: sin Web Locks (navegadores viejos) la carrera entre pestañas sigue ahí; sin alternativa barata.
+async function withRefreshLock(task: () => Promise<string | null>): Promise<string | null> {
+  return navigator.locks ? await navigator.locks.request('yura-token-refresh', task) : task()
+}
+
 async function requestRefresh(): Promise<string | null> {
-  const refreshToken = localStorage.getItem('refresh_token')
-  if (!refreshToken) {
+  const staleToken = localStorage.getItem('refresh_token')
+  if (!staleToken) {
     return null
   }
+  return withRefreshLock(async () => {
+    // Mientras esperaba el candado, otra pestaña pudo renovar (token distinto) o cerrar la sesión (sin token).
+    const current = localStorage.getItem('refresh_token')
+    if (current === staleToken) return renewWith(staleToken)
+    return current ? localStorage.getItem('access_token') : null
+  })
+}
 
+async function renewWith(refreshToken: string): Promise<string | null> {
   let res: Response
   try {
     res = await fetch(`${API_URL}/auth/refresh`, {
@@ -111,19 +127,62 @@ export function refreshSession(): Promise<string | null> {
   return refreshPromise
 }
 
-export async function api<T>(path: string, init: RequestInit = {}, isRetry = false): Promise<T> {
+async function maybeProactiveRefresh(path: string, isRetry: boolean): Promise<void> {
   const isAuthEndpoint =
     path.startsWith('/auth/login') || path.startsWith('/auth/refresh') || path.startsWith('/auth/logout')
 
-  if (!isAuthEndpoint && !isRetry) {
-    const currentToken = localStorage.getItem('access_token')
-    const refreshToken = localStorage.getItem('refresh_token')
-    if (currentToken && refreshToken && isTokenExpiringSoon(currentToken)) {
-      // Si la renovación proactiva no está disponible, se sigue con el token actual:
-      // el servidor decide y, si responde 401, el camino reactivo de abajo lo resuelve.
-      await refreshSession().catch(() => null)
+  if (isAuthEndpoint || isRetry) {
+    return
+  }
+
+  const currentToken = localStorage.getItem('access_token')
+  const refreshToken = localStorage.getItem('refresh_token')
+  if (currentToken && refreshToken && isTokenExpiringSoon(currentToken)) {
+    // Si la renovación proactiva no está disponible, se sigue con el token actual:
+    // el servidor decide y, si responde 401, el camino reactivo de abajo lo resuelve.
+    await refreshSession().catch(() => null)
+  }
+}
+
+function isRefreshEligible(path: string, isRetry: boolean): boolean {
+  if (isRetry || path.startsWith('/auth/refresh') || path.startsWith('/auth/logout')) {
+    return false
+  }
+  return Boolean(localStorage.getItem('refresh_token'))
+}
+
+async function handleUnauthorized<T>(
+  path: string,
+  init: RequestInit,
+  isRetry: boolean,
+  status: number,
+  bodyMessage?: string,
+): Promise<T> {
+  if (path.startsWith('/auth/login')) {
+    throw new ApiError(status, bodyMessage ?? `Error ${status}`)
+  }
+
+  if (isRefreshEligible(path, isRetry)) {
+    try {
+      const refreshedToken = await refreshSession()
+      if (refreshedToken) {
+        return await api<T>(path, init, true)
+      }
+    } catch (err) {
+      // Fallo transitorio de la renovación: no se cierra la sesión.
+      if (err instanceof RefreshUnavailableError) {
+        throw new ApiError(status, err.message)
+      }
+      throw err
     }
   }
+
+  notifyUnauthorized()
+  throw new ApiError(status, bodyMessage ?? `Error ${status}`)
+}
+
+export async function api<T>(path: string, init: RequestInit = {}, isRetry = false): Promise<T> {
+  await maybeProactiveRefresh(path, isRetry)
 
   const token = localStorage.getItem('access_token')
   const res = await fetch(`${API_URL}${path}`, {
@@ -137,30 +196,9 @@ export async function api<T>(path: string, init: RequestInit = {}, isRetry = fal
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-
     if (res.status === 401) {
-      if (path.startsWith('/auth/login')) {
-        throw new ApiError(res.status, body.message ?? `Error ${res.status}`)
-      }
-
-      if (!isRetry && !path.startsWith('/auth/refresh') && !path.startsWith('/auth/logout') && localStorage.getItem('refresh_token')) {
-        try {
-          const refreshedToken = await refreshSession()
-          if (refreshedToken) {
-            return api<T>(path, init, true)
-          }
-        } catch (err) {
-          // Fallo transitorio de la renovación: no se cierra la sesión.
-          if (err instanceof RefreshUnavailableError) {
-            throw new ApiError(res.status, err.message)
-          }
-          throw err
-        }
-      }
-
-      notifyUnauthorized()
+      return handleUnauthorized<T>(path, init, isRetry, res.status, body.message)
     }
-
     throw new ApiError(res.status, body.message ?? `Error ${res.status}`)
   }
 

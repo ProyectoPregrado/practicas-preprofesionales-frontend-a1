@@ -164,7 +164,7 @@ function RejectDialog({ log, onCancel, onConfirm }: RejectDialogProps) {
   }
 
   function appendReason(reason: string) {
-    setNote((prev) => (prev ? `${prev.replace(/\s*$/, '')} ${reason}. ` : `${reason}. `))
+    setNote((prev) => (prev ? `${prev.trimEnd()} ${reason}. ` : `${reason}. `))
     setError(null)
   }
 
@@ -266,6 +266,16 @@ export function ReviewHoursPage() {
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [rejectingLog, setRejectingLog] = useState<LocalHourLog | null>(null)
 
+  function getReviewErrorMessage(err: unknown): string {
+    if (err instanceof ApiError && err.statusCode === 403) {
+      return 'No tienes permiso para revisar este registro porque no eres el tutor asignado a esta práctica.'
+    }
+    if (err instanceof ApiError) {
+      return err.message
+    }
+    return 'No se pudo enviar la revisión'
+  }
+
   async function reviewLog(logId: number, status: 'APPROVED' | 'REJECTED', note?: string) {
     setReviewError(null)
     setActionState((prev) => ({ ...prev, [logId]: status === 'APPROVED' ? 'approving' : 'rejecting' }))
@@ -277,13 +287,7 @@ export function ReviewHoursPage() {
       await syncNow()
       setActionState((prev) => ({ ...prev, [logId]: status === 'APPROVED' ? 'approved' : 'rejected' }))
     } catch (err) {
-      const msg =
-        err instanceof ApiError && err.statusCode === 403
-          ? 'No tienes permiso para revisar este registro porque no eres el tutor asignado a esta práctica.'
-          : err instanceof ApiError
-            ? err.message
-            : 'No se pudo enviar la revisión'
-      setReviewError(msg)
+      setReviewError(getReviewErrorMessage(err))
       setActionState((prev) => ({ ...prev, [logId]: null }))
     }
   }
