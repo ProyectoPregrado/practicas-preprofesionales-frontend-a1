@@ -102,7 +102,7 @@ export function LoginPage() {
 
         <div className="rounded-2xl bg-surface px-7 py-7">
           <h1 className="font-display text-26 font-bold tracking-[-0.02em] text-ink">
-            Entrá a tu cuenta
+            Entra a tu cuenta
           </h1>
           <p className="mt-1 text-14 text-inkMid">
             Con el correo institucional que te dio la unidad de vinculación.
@@ -154,7 +154,7 @@ export function LoginPage() {
               Hay {pendingUnsyncedCount}{' '}
               {pendingUnsyncedCount === 1 ? 'registro de hora' : 'registros de horas'} pendiente
               {pendingUnsyncedCount === 1 ? '' : 's'} de sincronizar del usuario anterior.
-              Si entrás con otra cuenta, estas horas se descartarán definitivamente.
+              Si entras con otra cuenta, estas horas se descartarán definitivamente.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

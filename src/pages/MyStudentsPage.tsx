@@ -74,7 +74,7 @@ export function MyStudentsPage() {
     <>
       <PageHeader
         title="Mis practicantes"
-        subtitle="Ordenados como los devuelve tu cola: revisá primero lo que está esperando."
+        subtitle="Ordenados como los devuelve tu cola: revisa primero lo que está esperando."
       />
 
       {rows.length > 0 ? (
@@ -107,7 +107,7 @@ export function MyStudentsPage() {
         {rows.length === 0 ? (
           <EmptyState
             title="Todavía no tienes practicantes asignados"
-            description="Cuando la coordinación te asigne uno, aparece acá."
+            description="Cuando la coordinación te asigne uno, aparece aquí."
           />
         ) : (
           <Ledger header={<ColumnHeader />}>

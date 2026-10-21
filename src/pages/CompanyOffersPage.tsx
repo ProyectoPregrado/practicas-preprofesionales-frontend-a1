@@ -229,14 +229,14 @@ function CreateOfferDialog({
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="offer-description">¿Qué va a hacer el practicante?</Label>
               <p className="text-12 text-inkSoft">
-                Indicá las actividades y quién lo supervisa; es lo que más devuelve la coordinación.
+                Indica las actividades y quién lo supervisa; es lo que más devuelve la coordinación.
               </p>
               <Textarea
                 id="offer-description"
                 value={form.description}
                 onChange={(event) => onFieldChange('description', event.target.value)}
                 rows={3}
-                placeholder="Describí las actividades, el horario y quién supervisa"
+                placeholder="Describe las actividades, el horario y quién supervisa"
                 aria-invalid={Boolean(formErrors.description)}
               />
               <FieldError message={formErrors.description} />
@@ -493,7 +493,7 @@ function getCloseErrorMessage(err: unknown): string {
     }
   }
 
-  const intro = 'Publicá una vacante y recibí postulaciones de estudiantes.'
+  const intro = 'Publica una vacante y recibe postulaciones de estudiantes.'
 
   return (
     <>
@@ -516,7 +516,7 @@ function getCloseErrorMessage(err: unknown): string {
         empty={
           <EmptyState
             title="Todavía no has publicado ofertas"
-            description="Publicá una vacante para que los estudiantes puedan postular."
+            description="Publica una vacante para que los estudiantes puedan postular."
             action={
               <Button type="button" size="sm" onClick={openDialog}>
                 Publicar oferta
