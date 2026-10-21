@@ -39,6 +39,7 @@
     --chip-void: 4 65% 95%; /* #FBEDEC */
     --dot-pending: 33 78% 30%; /* #885311 */
     --dot-void: 4 71% 41%; /* #B3281E */
+    --cafe-light: 35 62% 64%; /* #DCAC62 — acento café legible sobre azul oscuro (REDISEÑO-1) */
 
     /* Interacción */
     --nav-hover: 212 52% 91%; /* #DCE7F4 */

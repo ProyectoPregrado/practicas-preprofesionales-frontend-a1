@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -50,7 +50,7 @@ describe('LoginPage', () => {
     )
 
     expect(screen.getByLabelText(/correo institucional/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/contraseña/i)).toBeInTheDocument()
+    expect(screen.getByLabelText('Contraseña')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /entrar/i })).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -81,7 +81,7 @@ describe('LoginPage', () => {
     )
 
     await user.type(screen.getByLabelText(/correo institucional/i), 'user@miyura.com')
-    await user.type(screen.getByLabelText(/contraseña/i), 'wrongpass')
+    await user.type(screen.getByLabelText('Contraseña'), 'wrongpass')
     await user.click(screen.getByRole('button', { name: /entrar/i }))
 
     await waitFor(() => {
@@ -100,7 +100,7 @@ describe('LoginPage', () => {
     )
 
     await user.type(screen.getByLabelText(/correo institucional/i), 'estudiante@miyura.com')
-    await user.type(screen.getByLabelText(/contraseña/i), 'secret123')
+    await user.type(screen.getByLabelText('Contraseña'), 'secret123')
     await user.click(screen.getByRole('button', { name: /entrar/i }))
 
     await waitFor(() => {
@@ -120,7 +120,7 @@ describe('LoginPage', () => {
     )
 
     await user.type(screen.getByLabelText(/correo institucional/i), 'otro@miyura.com')
-    await user.type(screen.getByLabelText(/contraseña/i), 'pass123')
+    await user.type(screen.getByLabelText('Contraseña'), 'pass123')
     await user.click(screen.getByRole('button', { name: /entrar/i }))
 
     await waitFor(() => {
@@ -153,7 +153,7 @@ describe('LoginPage', () => {
     )
 
     await user.type(screen.getByLabelText(/correo institucional/i), 'otro@miyura.com')
-    await user.type(screen.getByLabelText(/contraseña/i), 'pass123')
+    await user.type(screen.getByLabelText('Contraseña'), 'pass123')
     await user.click(screen.getByRole('button', { name: /entrar/i }))
 
     await waitFor(() => {
@@ -167,5 +167,67 @@ describe('LoginPage', () => {
       expect(mockConfirmDiscard).toHaveBeenCalledTimes(1)
       expect(mockNavigate).toHaveBeenCalledWith('/')
     })
+  })
+})
+
+// REDISEÑO-1: pantalla dividida (panel de marca + formulario) en azul, blanco y café. El panel solo dice lo que la
+// aplicación hace de verdad: nada de cifras inventadas ni de controles que no existen.
+describe('LoginPage — pantalla dividida (REDISEÑO-1)', () => {
+  const renderPage = () =>
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    )
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    sessionStorage.clear()
+  })
+
+  it('el panel de marca presenta la plataforma con un titular y tres capacidades reales', () => {
+    renderPage()
+
+    const panel = screen.getByRole('complementary', { name: 'Sobre la plataforma' })
+    expect(within(panel).getByRole('heading', { name: 'Gestiona las prácticas preprofesionales en un solo lugar' })).toBeInTheDocument()
+    for (const capacidad of ['Cuatro roles', 'Libro de horas sin conexión', 'Acreditación por periodo']) {
+      expect(within(panel).getByText(capacidad)).toBeInTheDocument()
+    }
+  })
+
+  it('el formulario sigue teniendo un único título principal', () => {
+    renderPage()
+
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+    expect(screen.getByRole('heading', { level: 1, name: 'Entra a tu cuenta' })).toBeInTheDocument()
+  })
+
+  it('el botón del ojo muestra y oculta la contraseña, y avisa de su estado', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const input = screen.getByLabelText('Contraseña')
+
+    expect(input).toHaveAttribute('type', 'password')
+    await user.click(screen.getByRole('button', { name: 'Mostrar contraseña' }))
+    expect(input).toHaveAttribute('type', 'text')
+    expect(screen.getByRole('button', { name: 'Ocultar contraseña' })).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(screen.getByRole('button', { name: 'Ocultar contraseña' }))
+    expect(input).toHaveAttribute('type', 'password')
+  })
+
+  it('el botón del ojo no envía el formulario', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(screen.getByRole('button', { name: 'Mostrar contraseña' }))
+
+    expect(mockLogin).not.toHaveBeenCalled()
+  })
+
+  it('no ofrece acceso con Google, recuperar contraseña ni recordar sesión: esos flujos no existen', () => {
+    renderPage()
+
+    expect(screen.queryByText(/google|olvidaste|recordar mi sesión/i)).toBeNull()
   })
 })
