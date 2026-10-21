@@ -247,13 +247,13 @@ export function MyPlacementPage() {
 
       <PlacementKpis hours={hours} documents={documents} logs={logs} />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <div className="flex min-w-0 flex-col gap-4 lg:col-span-7">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        <div className="flex min-w-0 flex-col gap-4 xl:col-span-7">
           <RecentLogs logs={logs} />
           <WeeklyHoursChart week={weekHours(logs, new Date())} />
         </div>
 
-        <div className="flex min-w-0 flex-col gap-4 lg:col-span-5">
+        <div className="flex min-w-0 flex-col gap-4 xl:col-span-5">
           <Section title="Datos de la práctica">
             <dl className="divide-y divide-paperRule">
               <DataRow label="Empresa">Empresa #{placement.companyId}</DataRow>
