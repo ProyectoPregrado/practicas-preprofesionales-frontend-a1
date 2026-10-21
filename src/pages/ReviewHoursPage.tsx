@@ -23,6 +23,7 @@ import { Ledger, LedgerHeaderRow } from '@/components/ledger/Ledger'
 import { LedgerRow } from '@/components/ledger/LedgerRow'
 import { parseLocalDate } from '@/lib/date'
 import { summarizeHours } from '@/lib/hours'
+import { describeError } from '@/lib/describeError'
 import { confirmar, error as notifyError, exito } from '@/lib/notify'
 import { plural } from '@/lib/utils'
 import { db, type LocalHourLog, type LocalPlacement } from '@/offline/db'
@@ -269,13 +270,11 @@ export function ReviewHoursPage() {
   const confirming = useRef(false)
 
   function getReviewErrorMessage(err: unknown): string {
-    if (err instanceof ApiError && err.statusCode === 403) {
-      return 'No tienes permiso para revisar este registro porque no eres el tutor asignado a esta práctica.'
-    }
-    if (err instanceof ApiError) {
-      return err.message
-    }
-    return 'No se pudo enviar la revisión'
+    return (
+      describeError(err, {
+        forbidden: 'No tienes permiso para revisar este registro porque no eres el tutor asignado a esta práctica.',
+      }) ?? 'No se pudo enviar la revisión'
+    )
   }
 
   async function reviewLog(logId: number, status: 'APPROVED' | 'REJECTED', note?: string) {

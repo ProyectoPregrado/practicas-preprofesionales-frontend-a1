@@ -1,7 +1,6 @@
 import { type FormEvent, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Link, useParams } from 'react-router-dom'
-import { ApiError } from '@/api/client'
 import { submitEvaluation } from '@/api/evaluations'
 import { useAuth } from '@/auth/AuthContext'
 import { PageHeader } from '@/components/PageHeader'
@@ -11,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { parseLocalDate } from '@/lib/date'
+import { describeError } from '@/lib/describeError'
 import { confirmar, error as notifyError } from '@/lib/notify'
 import { db, type LocalPlacement } from '@/offline/db'
 
@@ -36,14 +36,6 @@ function periodFromStartDate(startDate: string): string {
   const year = parsed.getFullYear()
   const term = parsed.getMonth() < 6 ? 1 : 2
   return `${year}-${term}`
-}
-
-// Texto del aviso de error; sin texto, el aviso muestra solo el título.
-function getEvaluateErrorMessage(err: unknown): string | undefined {
-  if (err instanceof ApiError && err.statusCode === 403) {
-    return 'No tienes permiso para evaluar esta práctica porque no eres el tutor asignado.'
-  }
-  return err instanceof ApiError ? err.message : undefined
 }
 
 /** Evaluación del tutor sobre un placement: rúbrica fija + comentario. No sincronizable: siempre requiere red. */
@@ -137,7 +129,10 @@ export function EvaluatePage() {
       })
       setSubmitted(true)
     } catch (err) {
-      await notifyError('No se pudo enviar la evaluación', getEvaluateErrorMessage(err))
+      await notifyError(
+        'No se pudo enviar la evaluación',
+        describeError(err, { forbidden: 'No tienes permiso para evaluar esta práctica porque no eres el tutor asignado.' }),
+      )
     } finally {
       setSubmitting(false)
     }

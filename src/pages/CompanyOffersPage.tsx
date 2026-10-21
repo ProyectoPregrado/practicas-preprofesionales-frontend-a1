@@ -32,6 +32,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { parseLocalDate } from '@/lib/date'
+import { describeError } from '@/lib/describeError'
 import { type ConfirmarOptions, confirmar, error as notifyError, exito } from '@/lib/notify'
 import { plural } from '@/lib/utils'
 
@@ -373,23 +374,17 @@ export function CompanyOffersPage() {
   const myCompany = companies?.find((company) => company.id === user?.companyId)
 
 function getPublishErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.statusCode === 403) {
-    return 'No tienes permiso para publicar esta oferta porque no pertenece a tu empresa.'
-  }
-  if (err instanceof ApiError) {
-    return err.message
-  }
-  return 'No se pudo publicar la oferta'
+  return (
+    describeError(err, { forbidden: 'No tienes permiso para publicar esta oferta porque no pertenece a tu empresa.' }) ??
+    'No se pudo publicar la oferta'
+  )
 }
 
 function getCloseErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.statusCode === 403) {
-    return 'No tienes permiso para cerrar esta oferta porque no pertenece a tu empresa.'
-  }
-  if (err instanceof ApiError) {
-    return err.message
-  }
-  return 'No se pudo cerrar la oferta'
+  return (
+    describeError(err, { forbidden: 'No tienes permiso para cerrar esta oferta porque no pertenece a tu empresa.' }) ??
+    'No se pudo cerrar la oferta'
+  )
 }
 
   async function handlePublish(offerId: number) {

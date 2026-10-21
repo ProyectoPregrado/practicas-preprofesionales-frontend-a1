@@ -14,6 +14,7 @@ import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Ledger } from '@/components/ledger/Ledger'
 import { parseLocalDate } from '@/lib/date'
+import { describeError } from '@/lib/describeError'
 import { confirmar, error, exito } from '@/lib/notify'
 
 type DecisionState = 'interviewing' | 'accepting' | 'rejecting' | null
@@ -48,19 +49,20 @@ function ColumnHeader() {
 }
 
 function decisionErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.statusCode === 403) {
-    return 'No puedes decidir postulaciones de ofertas que pertenecen a otra empresa.'
-  }
-  return err instanceof ApiError ? err.message : 'No se pudo enviar la decisión'
+  return (
+    describeError(err, { forbidden: 'No puedes decidir postulaciones de ofertas que pertenecen a otra empresa.' }) ??
+    'No se pudo enviar la decisión'
+  )
 }
 
 // F-1b: un solo lugar para explicar los 403 y 404 de la carga; el resto muestra el mensaje del servidor.
 function loadErrorMessage(err: unknown, fallback: string): string {
-  if (err instanceof ApiError && err.statusCode === 403) {
-    return 'No tienes permiso para ver las postulaciones de esta oferta porque no pertenece a tu empresa.'
-  }
-  if (err instanceof ApiError && err.statusCode === 404) return 'Esta oferta no existe o no está disponible.'
-  return err instanceof ApiError ? err.message : fallback
+  return (
+    describeError(err, {
+      forbidden: 'No tienes permiso para ver las postulaciones de esta oferta porque no pertenece a tu empresa.',
+      notFound: 'Esta oferta no existe o no está disponible.',
+    }) ?? fallback
+  )
 }
 
 function BackLink() {
