@@ -6,6 +6,9 @@ import { useAuth } from '@/auth/AuthContext'
 import { CalendarDays, Undo2 } from 'lucide-react'
 import { FilterTabs } from '@/components/FilterTabs'
 import { PageHeader } from '@/components/PageHeader'
+import { ExportCsvButton } from '@/components/ExportCsvButton'
+import { csvFilename } from '@/lib/csv'
+import { hourLogTable } from '@/lib/exportTables'
 import { ProgressBar } from '@/components/ProgressBar'
 import { KpiCard } from '@/components/placement/KpiCard'
 import { KpiGrid } from '@/components/placement/KpiGrid'
@@ -405,6 +408,11 @@ export function ReviewHoursPage() {
             <Button asChild variant="outline">
               <Link to="/practicantes">Volver a la lista</Link>
             </Button>
+            <ExportCsvButton
+              filename={csvFilename(['horas', 'estudiante', placement.studentId])}
+              rows={() => hourLogTable(logs.filter((log) => statusFilter === 'ALL' || log.status === statusFilter))}
+              disabled={visibleLogs.length === 0}
+            />
             <Button asChild variant="outline">
               <Link to={`/practicantes/${placementId}/documentos`}>Documentos</Link>
             </Button>

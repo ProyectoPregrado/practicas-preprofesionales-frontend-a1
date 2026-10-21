@@ -3,6 +3,9 @@ import { type AccreditationRow, reportForPeriod } from '@/api/accreditation'
 import { ApiError } from '@/api/client'
 import { FilterTabs } from '@/components/FilterTabs'
 import { PageHeader } from '@/components/PageHeader'
+import { ExportCsvButton } from '@/components/ExportCsvButton'
+import { csvFilename } from '@/lib/csv'
+import { accreditationTable } from '@/lib/exportTables'
 import { AsyncSection, EmptyState, Panel, TableHeaderRow, rowClass } from '@/components/Panel'
 import { ProgressBar } from '@/components/ProgressBar'
 import { StatCard, StatGrid } from '@/components/StatCard'
@@ -103,6 +106,14 @@ export function AccreditationPage() {
       <PageHeader
         title="Acreditación"
         subtitle="El acta del periodo: quién cierra su práctica y quién todavía no."
+        actions={
+          <ExportCsvButton
+            label="Exportar acta"
+            filename={csvFilename(['acta', 'acreditacion', period])}
+            rows={() => accreditationTable(rows ?? [], period)}
+            disabled={!rows?.length}
+          />
+        }
       />
 
       <div className="flex flex-wrap items-center gap-2">
