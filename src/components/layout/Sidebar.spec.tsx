@@ -62,16 +62,18 @@ describe('Sidebar', () => {
     expect(screen.getByRole('link', { name: 'Inicio' })).not.toHaveAttribute('aria-current')
   })
 
-  it('ofrece «Registrar horas» al estudiante, hacia el libro de horas', () => {
-    renderSidebar('STUDENT')
-
-    expect(screen.getByRole('link', { name: 'Registrar horas' })).toHaveAttribute('href', '/horas')
-  })
-
-  it.each(['TUTOR', 'COMPANY', 'COORDINATOR'] as const)('%s no ve «Registrar horas»', (role) => {
+  // Para registrar horas ya están «Mis horas» en la navegación y el botón del inicio (que abre el modal).
+  it.each(['STUDENT', 'TUTOR', 'COMPANY', 'COORDINATOR'] as const)('%s no ve «Registrar horas» en la barra lateral', (role) => {
     renderSidebar(role)
 
     expect(screen.queryByRole('link', { name: 'Registrar horas' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Registrar horas' })).toBeNull()
+  })
+
+  it('el estudiante llega al libro de horas por «Mis horas»', () => {
+    renderSidebar('STUDENT')
+
+    expect(screen.getByRole('link', { name: 'Mis horas' })).toHaveAttribute('href', '/horas')
   })
 
   it('incluye el indicador de sincronización', () => {
