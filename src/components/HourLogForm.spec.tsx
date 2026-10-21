@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as notify from '@/lib/notify'
 import { db } from '@/offline/db'
 import { HourLogForm } from './HourLogForm'
+
+vi.mock('@/lib/notify')
 
 function fillTimes(start: string, end: string) {
   fireEvent.change(screen.getByLabelText('Hora de inicio'), { target: { value: start } })
@@ -266,3 +269,52 @@ describe('HourLogForm — tope diario de 8 horas (E6-01)', () => {
   })
 })
 
+
+// UX-7: guardar horas escribe en el dispositivo y deja la operación en cola; el servidor aún no las tiene. El aviso
+// no puede decir «enviado»: dice dónde quedaron y que se sincronizarán.
+describe('HourLogForm — aviso al guardar (UX-7)', () => {
+  const SAVED = 'Guardado en este dispositivo. Se sincronizará con el servidor en cuanto haya conexión.'
+
+  async function fillAndSave(activity = 'Mantenimiento de bombas') {
+    render(<HourLogForm placementId={1} />)
+    fillTimes('08:00', '12:00')
+    fireEvent.change(screen.getByLabelText('Actividad'), { target: { value: activity } })
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar horas' }))
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.mocked(notify.exito).mockResolvedValue(undefined as never)
+    await db.hourLogs.clear()
+    await db.outbox.clear()
+  })
+
+  it('al guardar avisa que quedó en este dispositivo y que se sincronizará, sin decir «enviado»', async () => {
+    await fillAndSave()
+
+    await waitFor(() => expect(notify.exito).toHaveBeenCalledTimes(1))
+    expect(notify.exito).toHaveBeenCalledWith(SAVED)
+    expect(vi.mocked(notify.exito).mock.calls[0][0]).not.toMatch(/enviad/i)
+    expect(await db.hourLogs.where('placementId').equals(1).count()).toBe(1)
+  })
+
+  it('sin conexión el aviso es el mismo: no promete que ya llegó al servidor', async () => {
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    try {
+      await fillAndSave()
+
+      await waitFor(() => expect(notify.exito).toHaveBeenCalledWith(SAVED))
+      expect(await db.outbox.count()).toBe(1)
+    } finally {
+      onLine.mockRestore()
+    }
+  })
+
+  it('si falta la actividad se avisa en línea y no hay aviso de éxito', async () => {
+    await fillAndSave('   ')
+
+    expect(await screen.findByText(/actividad/i, { selector: 'p[role="alert"]' })).toBeTruthy()
+    expect(notify.exito).not.toHaveBeenCalled()
+    expect(await db.hourLogs.count()).toBe(0)
+  })
+})

@@ -1,11 +1,20 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError, api } from '@/api/client'
 import { useAuth } from '@/auth/AuthContext'
-import { HoursProgressPanel } from '@/components/HoursProgressPanel'
+import { CalendarDays, Undo2 } from 'lucide-react'
+import { FilterTabs } from '@/components/FilterTabs'
 import { PageHeader } from '@/components/PageHeader'
+import { ExportCsvButton } from '@/components/ExportCsvButton'
+import { csvFilename } from '@/lib/csv'
+import { hourLogTable } from '@/lib/exportTables'
+import { ProgressBar } from '@/components/ProgressBar'
+import { KpiCard } from '@/components/placement/KpiCard'
+import { KpiGrid } from '@/components/placement/KpiGrid'
+import { ApprovedHoursKpi, PendingHoursKpi } from '@/components/placement/HoursKpis'
 import { EmptyState, LoadingState, Panel } from '@/components/Panel'
+import { Pagination } from '@/components/Pagination'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import {
@@ -22,8 +31,12 @@ import { Textarea } from '@/components/ui/textarea'
 import { Ledger, LedgerHeaderRow } from '@/components/ledger/Ledger'
 import { LedgerRow } from '@/components/ledger/LedgerRow'
 import { parseLocalDate } from '@/lib/date'
-import { summarizeHours } from '@/lib/hours'
+import { type HoursSummary, summarizeHours } from '@/lib/hours'
+import { type StatusFilter, countByStatus } from '@/lib/hourLogFilters'
+import { describeError } from '@/lib/describeError'
+import { confirmar, error as notifyError, exito } from '@/lib/notify'
 import { plural } from '@/lib/utils'
+import { usePagination } from '@/lib/usePagination'
 import { db, type LocalHourLog, type LocalPlacement } from '@/offline/db'
 import { syncNow } from '@/offline/sync/scheduler'
 
@@ -59,7 +72,7 @@ function LedgerColumnHeader() {
 interface ReviewActionsProps {
   log: LocalHourLog
   state: ActionState
-  onApprove: (logId: number) => void
+  onApprove: (log: LocalHourLog) => void
   onReject: (log: LocalHourLog) => void
 }
 
@@ -75,7 +88,7 @@ function ReviewActions({ log, state, onApprove, onReject }: ReviewActionsProps) 
   const busy = state === 'approving' || state === 'rejecting'
   return (
     <>
-      <Button type="button" size="sm" onClick={() => onApprove(log.id)} disabled={busy}>
+      <Button type="button" size="sm" onClick={() => onApprove(log)} disabled={busy}>
         {state === 'approving' ? 'Aprobando…' : 'Aprobar'}
       </Button>
       <Button type="button" size="sm" variant="outline" onClick={() => onReject(log)} disabled={busy}>
@@ -87,27 +100,29 @@ function ReviewActions({ log, state, onApprove, onReject }: ReviewActionsProps) 
 
 interface ReviewListProps {
   logs: LocalHourLog[]
+  /** Hay un filtro de estado activo: la lista vacía no significa que no haya nada que revisar. */
+  filtered: boolean
   actionState: Record<number, ActionState>
-  onApprove: (logId: number) => void
+  onApprove: (log: LocalHourLog) => void
   onReject: (log: LocalHourLog) => void
 }
 
-function ReviewList({ logs, actionState, onApprove, onReject }: ReviewListProps) {
+function ReviewList({ logs, filtered, actionState, onApprove, onReject }: ReviewListProps) {
+  if (logs.length === 0 && filtered) {
+    return <EmptyState title="Ningún registro con este estado" description="Elige «Todos» para ver el libro completo." />
+  }
   if (logs.length === 0) {
     return (
       <EmptyState
         title="No tienes horas pendientes de revisar"
-        description="Cuando tu practicante envíe horas nuevas, aparecen acá."
+        description="Cuando tu practicante envíe horas nuevas, aparecen aquí."
       />
     )
   }
 
   return (
     <Ledger header={<LedgerColumnHeader />}>
-      {logs
-        .slice()
-        .reverse()
-        .map((log) => (
+      {logs.map((log) => (
           <LedgerRow key={log.id} syncState={log.syncState}>
             <span className="font-data text-14 text-ink sm:w-28">{formatDate(log.date)}</span>
             <span className="font-data text-13 text-inkSoft sm:w-28">
@@ -116,7 +131,7 @@ function ReviewList({ logs, actionState, onApprove, onReject }: ReviewListProps)
             <span className="font-data text-14 text-ink sm:w-14">{log.hours}</span>
             <span className="flex-1 text-14 text-inkBody">{log.activity}</span>
             <span className="sm:w-32">
-              <StatusBadge status={log.status} />
+              <StatusBadge status={log.status} domain="hour" />
             </span>
             <span className="flex flex-wrap justify-end gap-1.5 sm:w-44">
               <ReviewActions
@@ -227,13 +242,56 @@ function RejectDialog({ log, onCancel, onConfirm }: RejectDialogProps) {
   )
 }
 
-function pendingNote(pendingCount: number) {
-  if (pendingCount === 0) return null
+type ReviewFilter = Exclude<StatusFilter, 'DRAFT'>
+
+// Los borradores no llegan al tutor: no tiene sentido un filtro para ellos.
+const REVIEW_FILTERS: { value: ReviewFilter; label: string }[] = [
+  { value: 'ALL', label: 'Todos' },
+  { value: 'SUBMITTED', label: 'Sin revisar' },
+  { value: 'APPROVED', label: 'Aprobados' },
+  { value: 'REJECTED', label: 'Devueltos' },
+]
+
+interface ReviewKpisProps {
+  hours: HoursSummary
+  counts: Record<StatusFilter, number>
+  lastLogDate: string | null
+}
+
+/** Indicadores del practicante: avance, lo que espera, lo devuelto y la última actividad. */
+function ReviewKpis({ hours, counts, lastLogDate }: ReviewKpisProps) {
   return (
-    <span className="text-pending">
-      {' '}
-      · {plural(pendingCount, 'registro', 'registros')} sin revisar
-    </span>
+    <KpiGrid>
+      <ApprovedHoursKpi
+        hours={hours}
+        footnote={
+          <ProgressBar
+            value={hours.approvedPct}
+            pendingValue={hours.submittedPct}
+            label="Progreso de horas aprobadas"
+          />
+        }
+      />
+      <PendingHoursKpi
+        hours={hours}
+        footnote={plural(counts.SUBMITTED, 'registro espera tu decisión', 'registros esperan tu decisión')}
+      />
+      <KpiCard
+        label="Devueltos"
+        value={String(counts.REJECTED)}
+        unit={counts.REJECTED === 1 ? 'registro' : 'registros'}
+        icon={Undo2}
+        tone="soft"
+        footnote="Esperan la corrección del estudiante"
+      />
+      <KpiCard
+        label="Último registro"
+        value={lastLogDate ? formatDate(lastLogDate) : '—'}
+        icon={CalendarDays}
+        tone="soft"
+        footnote={plural(counts.ALL - counts.DRAFT, 'registro en el libro', 'registros en el libro')}
+      />
+    </KpiGrid>
   )
 }
 
@@ -262,22 +320,29 @@ export function ReviewHoursPage() {
     [placementId],
   )
 
+  const [statusFilter, setStatusFilter] = useState<ReviewFilter>('ALL')
+
+  // Más recientes primero; el hook los entrega de más antiguo a más reciente. Se paginan (5 a 30 filas, a elección del usuario).
+  const newestFirst = useMemo(
+    () => logs?.filter((log) => statusFilter === 'ALL' || log.status === statusFilter).reverse(),
+    [logs, statusFilter],
+  )
+  const { visibleItems: visibleLogs, pagination } = usePagination(newestFirst)
+
   const [actionState, setActionState] = useState<Record<number, ActionState>>({})
-  const [reviewError, setReviewError] = useState<string | null>(null)
   const [rejectingLog, setRejectingLog] = useState<LocalHourLog | null>(null)
+  // Evita abrir dos preguntas (y revisar dos veces) con un doble clic mientras la confirmación está abierta.
+  const confirming = useRef(false)
 
   function getReviewErrorMessage(err: unknown): string {
-    if (err instanceof ApiError && err.statusCode === 403) {
-      return 'No tienes permiso para revisar este registro porque no eres el tutor asignado a esta práctica.'
-    }
-    if (err instanceof ApiError) {
-      return err.message
-    }
-    return 'No se pudo enviar la revisión'
+    return (
+      describeError(err, {
+        forbidden: 'No tienes permiso para revisar este registro porque no eres el tutor asignado a esta práctica.',
+      }) ?? 'No se pudo enviar la revisión'
+    )
   }
 
   async function reviewLog(logId: number, status: 'APPROVED' | 'REJECTED', note?: string) {
-    setReviewError(null)
     setActionState((prev) => ({ ...prev, [logId]: status === 'APPROVED' ? 'approving' : 'rejecting' }))
     try {
       await api(`/hour-logs/${logId}/review`, {
@@ -286,9 +351,37 @@ export function ReviewHoursPage() {
       })
       await syncNow()
       setActionState((prev) => ({ ...prev, [logId]: status === 'APPROVED' ? 'approved' : 'rejected' }))
+      exito(status === 'APPROVED' ? 'Horas aprobadas' : 'Registro devuelto al estudiante')
     } catch (err) {
-      setReviewError(getReviewErrorMessage(err))
+      // UX-4: un aviso que la persona tiene que leer (el mensaje en línea quedaba arriba de la lista, fuera de la
+      // vista). Se espera: los botones siguen deshabilitados hasta que se cierra.
+      // UX-10: un 400 significa que el registro ya no está pendiente (otra pestaña u otro equipo lo revisó): la lista
+      // local está vieja, así que se re-sincroniza antes del aviso. Si falla, el aviso sigue siendo lo importante.
+      if (err instanceof ApiError && err.statusCode === 400) await syncNow().catch(() => undefined)
+      await notifyError(
+        status === 'APPROVED' ? 'No se pudo aprobar las horas' : 'No se pudo devolver el registro',
+        getReviewErrorMessage(err),
+      )
       setActionState((prev) => ({ ...prev, [logId]: null }))
+    }
+  }
+
+  // Aprobar cuenta para el acta y no se puede deshacer: se pide confirmación. Devolver ya tiene su diálogo con la nota.
+  async function approve(log: LocalHourLog) {
+    if (confirming.current) return
+    confirming.current = true
+    try {
+      const { approvedHours, requiredHours } = hours
+      const completes = approvedHours + log.hours >= requiredHours
+      const completionNote = completes ? `Con estas horas la práctica llega a las ${requiredHours} requeridas y se completa. ` : ''
+      const accepted = await confirmar({
+        titulo: `¿Aprobar ${log.hours} h del ${formatDate(log.date)}?`,
+        texto: `${completionNote}Se suman ${log.hours} h a las ${approvedHours} aprobadas de ${requiredHours}. Esta decisión no se puede deshacer.`,
+        confirmar: 'Sí, aprobar',
+      })
+      if (accepted) await reviewLog(log.id, 'APPROVED')
+    } finally {
+      confirming.current = false
     }
   }
 
@@ -330,17 +423,26 @@ export function ReviewHoursPage() {
   }
 
   const hours = summarizeHours(logs, placement.requiredHours)
-  const pendingCount = logs.filter((log) => log.status === 'SUBMITTED').length
+  const counts = countByStatus(logs)
+  const pendingCount = counts.SUBMITTED
 
   return (
     <>
       <PageHeader
         title="Horas del practicante"
-        subtitle={`Estudiante #${placement.studentId} · Empresa #${placement.companyId}`}
+        subtitle={`Estudiante #${placement.studentId} · Empresa #${placement.companyId} · ${formatDate(placement.startDate)} – ${formatDate(placement.endDate)}`}
         actions={
           <>
             <Button asChild variant="outline">
               <Link to="/practicantes">Volver a la lista</Link>
+            </Button>
+            <ExportCsvButton
+              filename={csvFilename(['horas', 'estudiante', placement.studentId])}
+              rows={() => hourLogTable(logs.filter((log) => statusFilter === 'ALL' || log.status === statusFilter))}
+              disabled={visibleLogs.length === 0}
+            />
+            <Button asChild variant="outline">
+              <Link to={`/practicantes/${placementId}/documentos`}>Documentos</Link>
             </Button>
             <Button asChild>
               <Link to={`/practicantes/${placementId}/evaluar`}>Evaluar practicante</Link>
@@ -349,27 +451,34 @@ export function ReviewHoursPage() {
         }
       />
 
-      <HoursProgressPanel hours={hours} note={pendingNote(pendingCount)} />
-
-      {reviewError ? (
-        <p role="alert" className="rounded-lg bg-chipVoid px-4 py-3 text-13 text-void">
-          {reviewError}
-        </p>
-      ) : null}
+      <ReviewKpis hours={hours} counts={counts} lastLogDate={logs.at(-1)?.date ?? null} />
 
       <Panel
         toolbar={
-          <span className="ml-auto font-data text-12 text-inkSoft">
-            {plural(pendingCount, 'registro', 'registros')} sin revisar
-          </span>
+          <>
+            <FilterTabs
+              label="Filtrar por estado"
+              surface="well"
+              options={REVIEW_FILTERS.map(({ value, label }) => ({ value, label: `${label} · ${counts[value]}` }))}
+              value={statusFilter}
+              onChange={(value) => setStatusFilter(value as ReviewFilter)}
+            />
+            <span className="ml-auto font-data text-12 text-inkSoft">
+              {plural(pendingCount, 'registro', 'registros')} sin revisar
+            </span>
+          </>
         }
       >
         <ReviewList
-          logs={logs}
+          logs={visibleLogs}
+          filtered={statusFilter !== 'ALL'}
           actionState={actionState}
-          onApprove={(logId) => reviewLog(logId, 'APPROVED')}
+          onApprove={approve}
           onReject={setRejectingLog}
         />
+        <div className="px-4 pb-4">
+          <Pagination {...pagination} />
+        </div>
       </Panel>
 
       <RejectDialog

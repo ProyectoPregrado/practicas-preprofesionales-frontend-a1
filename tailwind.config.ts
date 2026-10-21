@@ -85,6 +85,7 @@ export default {
         chipPending: 'hsl(var(--chip-pending))',
         chipVoid: 'hsl(var(--chip-void))',
         dotPending: 'hsl(var(--dot-pending))',
+        cafeLight: 'hsl(var(--cafe-light))',
         dotVoid: 'hsl(var(--dot-void))',
         navHover: 'hsl(var(--nav-hover))',
         pillHover: 'hsl(var(--pill-hover))',
@@ -97,7 +98,7 @@ export default {
         row: '58px',
       },
       width: {
-        sidebar: '230px',
+        sidebar: '288px',
       },
     },
   },

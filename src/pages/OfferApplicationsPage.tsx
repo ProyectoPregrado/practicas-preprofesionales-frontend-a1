@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   type ApplicationDecision,
@@ -10,12 +10,23 @@ import { ApiError } from '@/api/client'
 import { type Offer, getOffer } from '@/api/offers'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, LoadingState, Panel, TableHeaderRow, rowClass } from '@/components/Panel'
+import { Pagination } from '@/components/Pagination'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Ledger } from '@/components/ledger/Ledger'
 import { parseLocalDate } from '@/lib/date'
+import { describeError } from '@/lib/describeError'
+import { confirmar, error, exito } from '@/lib/notify'
+import { usePagination } from '@/lib/usePagination'
 
 type DecisionState = 'interviewing' | 'accepting' | 'rejecting' | null
+
+// UX-2: el título del aviso dice qué acción falló.
+const DECISION_FAILURE_TITLE: Record<ApplicationDecision, string> = {
+  ACCEPTED: 'No se pudo aceptar la postulación',
+  REJECTED: 'No se pudo descartar la postulación',
+  INTERVIEW: 'No se pudo pasar la postulación a entrevista',
+}
 
 function formatDate(dateValue: string): string {
   const parsed = parseLocalDate(dateValue)
@@ -39,13 +50,21 @@ function ColumnHeader() {
   )
 }
 
+function decisionErrorMessage(err: unknown): string {
+  return (
+    describeError(err, { forbidden: 'No puedes decidir postulaciones de ofertas que pertenecen a otra empresa.' }) ??
+    'No se pudo enviar la decisión'
+  )
+}
+
 // F-1b: un solo lugar para explicar los 403 y 404 de la carga; el resto muestra el mensaje del servidor.
 function loadErrorMessage(err: unknown, fallback: string): string {
-  if (err instanceof ApiError && err.statusCode === 403) {
-    return 'No tienes permiso para ver las postulaciones de esta oferta porque no pertenece a tu empresa.'
-  }
-  if (err instanceof ApiError && err.statusCode === 404) return 'Esta oferta no existe o no está disponible.'
-  return err instanceof ApiError ? err.message : fallback
+  return (
+    describeError(err, {
+      forbidden: 'No tienes permiso para ver las postulaciones de esta oferta porque no pertenece a tu empresa.',
+      notFound: 'Esta oferta no existe o no está disponible.',
+    }) ?? fallback
+  )
 }
 
 function BackLink() {
@@ -74,8 +93,11 @@ export function OfferApplicationsPage() {
   const [applications, setApplications] = useState<OfferApplication[] | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | null>(null)
 
+  const { visibleItems: visibleApplications, pagination } = usePagination(applications)
+
   const [decisionState, setDecisionState] = useState<Record<number, DecisionState>>({})
-  const [decisionError, setDecisionError] = useState<string | null>(null)
+  // Evita abrir dos preguntas (y decidir dos veces) con un doble clic mientras la confirmación está abierta.
+  const confirming = useRef(false)
 
   function refetchApplications() {
     return listApplicationsForOffer(offerId)
@@ -111,18 +133,20 @@ export function OfferApplicationsPage() {
     }
   }, [offerId])
 
-  async function decide(applicationId: number, status: ApplicationDecision, state: DecisionState) {
-    setDecisionError(null)
+  async function decide(applicationId: number, status: ApplicationDecision, state: DecisionState, successMessage?: string) {
     setDecisionState((prev) => ({ ...prev, [applicationId]: state }))
     try {
       await decideApplication(applicationId, status)
+      if (successMessage) exito(successMessage)
       await refetchApplications()
     } catch (err) {
-      if (err instanceof ApiError && err.statusCode === 403) {
-        setDecisionError('No puedes decidir postulaciones de ofertas que pertenecen a otra empresa.')
-      } else {
-        setDecisionError(err instanceof ApiError ? err.message : 'No se pudo enviar la decisión')
-      }
+      // UX-2: un aviso que la persona tiene que leer. El mensaje en línea quedaba arriba de la lista, fuera de
+      // la vista de quien acaba de pulsar un botón más abajo. El aviso se espera: los botones siguen
+      // deshabilitados hasta que se cierra.
+      // UX-10: un 400 significa que el estado ya cambió (la postulación ya fue decidida, la oferta se llenó): la lista
+      // que se ve está vieja, así que se recarga antes del aviso para que quede al día detrás de él.
+      if (err instanceof ApiError && err.statusCode === 400) await refetchApplications()
+      await error(DECISION_FAILURE_TITLE[status], decisionErrorMessage(err))
     } finally {
       setDecisionState((prev) => ({ ...prev, [applicationId]: null }))
     }
@@ -156,7 +180,28 @@ export function OfferApplicationsPage() {
   }
 
   const occupied = acceptedCount(applications)
-  const remaining = offer.seats - occupied
+  const seats = offer.seats
+  const remaining = seats - occupied
+
+  // Aceptar consume un cupo y la decisión no se puede deshacer: se pide confirmación.
+  async function accept(application: OfferApplication) {
+    if (confirming.current) return
+    confirming.current = true
+    try {
+      const name = application.student.fullName
+      const accepted = await confirmar({
+        titulo: `¿Aceptar a ${name}?`,
+        texto:
+          remaining > 0
+            ? `Vas a ocupar un cupo: quedarán ${remaining - 1} de ${seats} cupos. Esta decisión no se puede deshacer.`
+            : 'Esta oferta ya tiene todos sus cupos ocupados; el servidor puede rechazar la aceptación. Esta decisión no se puede deshacer.',
+        confirmar: 'Sí, aceptar',
+      })
+      if (accepted) await decide(application.id, 'ACCEPTED', 'accepting', `Postulación de ${name} aceptada`)
+    } finally {
+      confirming.current = false
+    }
+  }
 
   return (
     <>
@@ -171,11 +216,6 @@ export function OfferApplicationsPage() {
         }
       />
 
-      {decisionError ? (
-        <p role="alert" className="rounded-lg bg-chipVoid px-4 py-3 text-13 text-void">
-          {decisionError}
-        </p>
-      ) : null}
 
       <Panel
         toolbar={
@@ -195,7 +235,7 @@ export function OfferApplicationsPage() {
           />
         ) : (
           <Ledger header={<ColumnHeader />}>
-            {applications.map((application) => {
+            {visibleApplications.map((application) => {
               const state = decisionState[application.id] ?? null
               const busy = state !== null
               const decidable =
@@ -233,7 +273,7 @@ export function OfferApplicationsPage() {
                         <Button
                           type="button"
                           size="sm"
-                          onClick={() => decide(application.id, 'ACCEPTED', 'accepting')}
+                          onClick={() => accept(application)}
                           disabled={busy}
                         >
                           {state === 'accepting' ? 'Aceptando…' : 'Aceptar'}
@@ -255,6 +295,9 @@ export function OfferApplicationsPage() {
             })}
           </Ledger>
         )}
+        <div className="px-4 pb-4">
+          <Pagination {...pagination} />
+        </div>
       </Panel>
     </>
   )

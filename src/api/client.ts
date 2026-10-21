@@ -151,13 +151,13 @@ function isRefreshEligible(path: string, isRetry: boolean): boolean {
   return Boolean(localStorage.getItem('refresh_token'))
 }
 
-async function handleUnauthorized<T>(
+async function handleUnauthorized(
   path: string,
   init: RequestInit,
   isRetry: boolean,
   status: number,
   bodyMessage?: string,
-): Promise<T> {
+): Promise<Response> {
   if (path.startsWith('/auth/login')) {
     throw new ApiError(status, bodyMessage ?? `Error ${status}`)
   }
@@ -166,7 +166,7 @@ async function handleUnauthorized<T>(
     try {
       const refreshedToken = await refreshSession()
       if (refreshedToken) {
-        return await api<T>(path, init, true)
+        return await send(path, init, true)
       }
     } catch (err) {
       // Fallo transitorio de la renovación: no se cierra la sesión.
@@ -181,14 +181,19 @@ async function handleUnauthorized<T>(
   throw new ApiError(status, bodyMessage ?? `Error ${status}`)
 }
 
-export async function api<T>(path: string, init: RequestInit = {}, isRetry = false): Promise<T> {
+/**
+ * Hace la petición con el token y la renovación de sesión, y devuelve la respuesta ya comprobada (2xx). Con un
+ * `FormData` no se fija `Content-Type`: el navegador pone el `multipart/form-data` con su separador.
+ */
+async function send(path: string, init: RequestInit, isRetry: boolean): Promise<Response> {
   await maybeProactiveRefresh(path, isRetry)
 
   const token = localStorage.getItem('access_token')
+  const isForm = typeof FormData !== 'undefined' && init.body instanceof FormData
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      ...(isForm ? {} : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init.headers,
     },
@@ -197,10 +202,16 @@ export async function api<T>(path: string, init: RequestInit = {}, isRetry = fal
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     if (res.status === 401) {
-      return handleUnauthorized<T>(path, init, isRetry, res.status, body.message)
+      return handleUnauthorized(path, init, isRetry, res.status, body.message)
     }
     throw new ApiError(res.status, body.message ?? `Error ${res.status}`)
   }
+
+  return res
+}
+
+export async function api<T>(path: string, init: RequestInit = {}, isRetry = false): Promise<T> {
+  const res = await send(path, init, isRetry)
 
   if (res.status === 204) {
     return undefined as unknown as T
@@ -209,3 +220,8 @@ export async function api<T>(path: string, init: RequestInit = {}, isRetry = fal
   return res.json() as Promise<T>
 }
 
+/** DOC-2: un archivo del servidor (un PDF, una imagen) con la misma sesión que el resto de la API. */
+export async function apiBlob(path: string): Promise<Blob> {
+  const res = await send(path, {}, false)
+  return res.blob()
+}

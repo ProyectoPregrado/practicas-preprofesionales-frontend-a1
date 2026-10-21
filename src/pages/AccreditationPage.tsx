@@ -3,12 +3,17 @@ import { type AccreditationRow, reportForPeriod } from '@/api/accreditation'
 import { ApiError } from '@/api/client'
 import { FilterTabs } from '@/components/FilterTabs'
 import { PageHeader } from '@/components/PageHeader'
+import { ExportCsvButton } from '@/components/ExportCsvButton'
+import { csvFilename } from '@/lib/csv'
+import { accreditationTable } from '@/lib/exportTables'
 import { AsyncSection, EmptyState, Panel, TableHeaderRow, rowClass } from '@/components/Panel'
 import { ProgressBar } from '@/components/ProgressBar'
 import { StatCard, StatGrid } from '@/components/StatCard'
+import { Pagination } from '@/components/Pagination'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Ledger } from '@/components/ledger/Ledger'
 import { plural } from '@/lib/utils'
+import { usePagination } from '@/lib/usePagination'
 
 // El backend exige `period` con formato AAAA-1/AAAA-2 (ver AccreditationQueryDto);
 // el selector nunca debe poder mandar un valor vacío, así que se restringe a
@@ -77,11 +82,13 @@ export function AccreditationPage() {
   const [period, setPeriod] = useState<(typeof PERIODS)[number]>(PERIODS[0])
   const [rows, setRows] = useState<AccreditationRow[] | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
+  const { visibleItems: visibleRows, resetPage, pagination } = usePagination(rows)
 
   useEffect(() => {
     let cancelled = false
     setRows(undefined)
     setError(null)
+    resetPage()
     reportForPeriod(period)
       .then((data) => {
         if (!cancelled) setRows(data)
@@ -92,13 +99,21 @@ export function AccreditationPage() {
     return () => {
       cancelled = true
     }
-  }, [period])
+  }, [period, resetPage])
 
   return (
     <>
       <PageHeader
         title="Acreditación"
         subtitle="El acta del periodo: quién cierra su práctica y quién todavía no."
+        actions={
+          <ExportCsvButton
+            label="Exportar acta"
+            filename={csvFilename(['acta', 'acreditacion', period])}
+            rows={() => accreditationTable(rows ?? [], period)}
+            disabled={!rows?.length}
+          />
+        }
       />
 
       <div className="flex flex-wrap items-center gap-2">
@@ -124,17 +139,20 @@ export function AccreditationPage() {
         empty={
           <EmptyState
             title="No hay placements en este periodo"
-            description="Probá con el otro periodo académico."
+            description="Prueba con el otro periodo académico."
           />
         }
       >
-        {(items) => (
+        {() => (
           <Panel>
             <Ledger header={<ColumnHeader />}>
-              {items.map((row) => (
+              {visibleRows.map((row) => (
                 <AccreditationRowItem key={row.placementId} row={row} />
               ))}
             </Ledger>
+            <div className="px-4 pb-4">
+              <Pagination {...pagination} />
+            </div>
           </Panel>
         )}
       </AsyncSection>

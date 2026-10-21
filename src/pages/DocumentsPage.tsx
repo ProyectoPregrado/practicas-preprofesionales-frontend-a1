@@ -1,38 +1,32 @@
 import { type ChangeEvent, type FormEvent, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ApiError, api } from '@/api/client'
+import { uploadDocument } from '@/api/documents'
 import { Chip } from '@/components/Chip'
+import { DocumentList } from '@/components/documents/DocumentList'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, LoadingState, Section } from '@/components/Panel'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { parseLocalDate } from '@/lib/date'
-import { plural } from '@/lib/utils'
+import { describeError } from '@/lib/describeError'
+import {
+  ACCEPTED_DOCUMENT_TYPES,
+  DOCUMENT_KIND_LABEL as KIND_LABEL,
+  type DocumentKind,
+  documentFileError,
+  formatFileSize,
+} from '@/lib/documentFiles'
+import { error as notifyError, exito } from '@/lib/notify'
+import { useOnline } from '@/offline/hooks/useOnline'
 import { db, type LocalDocument } from '@/offline/db'
 import { usePlacement } from '@/offline/hooks/usePlacement'
-
-type DocumentKind = 'AGREEMENT' | 'INSURANCE' | 'REPORT' | 'EVIDENCE'
 
 // Espejo de REQUIRED_DOCS en el backend (placement.service.ts): estos dos son
 // los únicos que bloquean la activación de la práctica.
 const REQUIRED_KINDS: DocumentKind[] = ['AGREEMENT', 'INSURANCE']
 
-const KIND_LABEL: Record<DocumentKind, string> = {
-  AGREEMENT: 'Convenio',
-  INSURANCE: 'Seguro',
-  REPORT: 'Informe',
-  EVIDENCE: 'Evidencia',
-}
-
 const DOC_ROW_CLASS = 'flex min-h-row items-center justify-between gap-4 px-[18px] py-2.5'
-
-function formatDate(dateValue: string): string {
-  const parsed = parseLocalDate(dateValue)
-  if (Number.isNaN(parsed.getTime())) return dateValue
-  return new Intl.DateTimeFormat('es-EC', { day: '2-digit', month: 'short', year: 'numeric' }).format(parsed)
-}
 
 /** Último estado conocido de un tipo de documento, o `null` si no se subió. */
 function latestStatus(documents: LocalDocument[], kind: DocumentKind): string | null {
@@ -46,7 +40,7 @@ function latestStatus(documents: LocalDocument[], kind: DocumentKind): string | 
 function RequiredStatus({ documents, kind }: { documents: LocalDocument[] | undefined; kind: DocumentKind }) {
   if (documents === undefined) return <span className="text-12 text-inkSoft">Cargando…</span>
   const status = latestStatus(documents, kind)
-  if (status) return <StatusBadge status={status} />
+  if (status) return <StatusBadge status={status} domain="document" />
   return <Chip tone="void">Falta subir</Chip>
 }
 
@@ -65,53 +59,6 @@ function RequiredDocuments({ documents }: { documents: LocalDocument[] | undefin
   )
 }
 
-function DocumentsList({ documents }: { documents: LocalDocument[] | undefined }) {
-  if (documents === undefined) {
-    return (
-      <Section title="Todos tus documentos">
-        <LoadingState>Cargando documentos…</LoadingState>
-      </Section>
-    )
-  }
-
-  if (documents.length === 0) {
-    return (
-      <Section title="Todos tus documentos">
-        <EmptyState
-          title="Todavía no has subido documentos"
-          description="Empieza por el convenio y el seguro."
-        />
-      </Section>
-    )
-  }
-
-  return (
-    <Section
-      title="Todos tus documentos"
-      aside={
-        <span className="font-data text-12 text-inkSoft">
-          {plural(documents.length, 'documento', 'documentos')}
-        </span>
-      }
-    >
-      <div className="divide-y divide-paperRule">
-        {documents.map((doc, index) => (
-          <div key={index} className={DOC_ROW_CLASS}>
-            <div className="min-w-0">
-              <div className="truncate text-14 font-semibold text-ink">{doc.filename}</div>
-              <div className="mt-0.5 text-12 text-inkSoft">
-                {KIND_LABEL[doc.kind as DocumentKind] ?? doc.kind} ·{' '}
-                <span className="font-data">{formatDate(doc.updatedAt)}</span>
-              </div>
-            </div>
-            <StatusBadge status={doc.status} />
-          </div>
-        ))}
-      </div>
-    </Section>
-  )
-}
-
 export function DocumentsPage() {
   const placement = usePlacement()
   const documents = useLiveQuery<LocalDocument[] | undefined>(async () => {
@@ -121,9 +68,10 @@ export function DocumentsPage() {
 
   const [kind, setKind] = useState<DocumentKind>('AGREEMENT')
   const [uploading, setUploading] = useState(false)
-  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
   const [file, setFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const online = useOnline()
 
   if (placement === undefined) {
     return <LoadingState>Cargando tu práctica…</LoadingState>
@@ -138,59 +86,50 @@ export function DocumentsPage() {
     )
   }
 
-function getUploadErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.statusCode === 403) {
-    return 'No tienes permiso para subir documentos a esta práctica.'
-  }
-  if (err instanceof ApiError) {
-    return err.message
-  }
-  return 'No se pudo subir el documento'
-}
-
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setUploadError(null)
+    setFileError(null)
 
     if (!file) {
-      setUploadError('Selecciona un archivo')
+      setFileError('Selecciona un archivo')
+      return
+    }
+    const problem = documentFileError(file)
+    if (problem) {
+      setFileError(problem)
       return
     }
 
     setUploading(true)
     try {
-      const created = await api<LocalDocument>(`/placements/${placement!.id}/documents`, {
-        method: 'POST',
-        body: JSON.stringify({
-          kind,
-          filename: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          size: file.size,
-          // No hay almacenamiento de archivos real en este template: es un
-          // identificador de referencia, no una URL donde recuperar el
-          // archivo. Cada equipo conecta su propio storage sobre este campo.
-          storageKey: crypto.randomUUID(),
-        }),
-      })
+      const created = await uploadDocument(placement!.id, kind, file)
       await db.documents.put(created)
       setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
+      // Sin `await`: se cierra solo y no debe dejar el botón en «Subiendo…». Desde DOC-1 el servidor guarda el
+      // archivo, así que ya se puede decir «subido».
+      exito(`Documento «${file.name}» subido`)
     } catch (err) {
-      setUploadError(getUploadErrorMessage(err))
+      await notifyError(
+        'No se pudo subir el documento',
+        describeError(err, { forbidden: 'No tienes permiso para subir documentos a esta práctica.' }),
+      )
     } finally {
       setUploading(false)
     }
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    setFile(event.target.files?.[0] ?? null)
+    const chosen = event.target.files?.[0] ?? null
+    setFile(chosen)
+    setFileError(chosen ? documentFileError(chosen) : null)
   }
 
   return (
     <>
       <PageHeader
         title="Documentos"
-        subtitle="A diferencia del libro de horas, subir un documento necesita conexión."
+        subtitle="Sube el convenio, el seguro y tus informes, y ábrelos cuando quieras. Subir necesita conexión."
       />
 
       <RequiredDocuments documents={documents} />
@@ -220,25 +159,41 @@ function getUploadErrorMessage(err: unknown): string {
                 id="document-file"
                 ref={fileInputRef}
                 type="file"
+                accept={ACCEPTED_DOCUMENT_TYPES}
+                aria-describedby="document-file-hint"
                 onChange={handleFileChange}
                 className="flex h-field w-full items-center rounded border border-line bg-surface px-[13px] text-13 text-inkBody file:mr-3 file:h-7 file:rounded-md file:border file:border-line file:bg-soft file:px-3 file:font-display file:text-13 file:font-medium file:text-ink"
               />
+              <p id="document-file-hint" className="text-12 text-inkSoft">
+                {file ? `${file.name} · ${formatFileSize(file.size)}` : 'PDF, PNG o JPG, hasta 10 MB.'}
+              </p>
             </div>
           </div>
 
-          {uploadError ? (
+          {fileError ? (
             <p role="alert" className="rounded-md bg-chipVoid px-3 py-2.5 text-13 text-void">
-              {uploadError}
+              {fileError}
             </p>
           ) : null}
 
-          <Button type="submit" disabled={uploading} className="self-start">
+          {!online ? (
+            <p className="rounded-md bg-chipPending px-3 py-2.5 text-13 text-pending">
+              Sin conexión: puedes ver la lista, pero para subir un archivo hace falta conexión.
+            </p>
+          ) : null}
+
+          <Button type="submit" disabled={uploading || !online} className="self-start">
             {uploading ? 'Subiendo…' : 'Subir documento'}
           </Button>
         </form>
       </Section>
 
-      <DocumentsList documents={documents} />
+      <DocumentList
+        title="Todos tus documentos"
+        documents={documents}
+        emptyTitle="Todavía no has subido documentos"
+        emptyDescription="Empieza por el convenio y el seguro."
+      />
     </>
   )
 }

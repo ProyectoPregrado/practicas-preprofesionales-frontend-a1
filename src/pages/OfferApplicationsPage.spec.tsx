@@ -1,13 +1,28 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/client'
 import * as companiesApi from '@/api/companies'
 import * as offersApi from '@/api/offers'
+import * as notify from '@/lib/notify'
 import { OfferApplicationsPage } from './OfferApplicationsPage'
 
 vi.mock('@/api/offers')
 vi.mock('@/api/companies')
+vi.mock('@/auth/AuthContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/auth/AuthContext')>()
+  return {
+    ...actual,
+    useAuth: () => ({
+      user: { id: 10, email: 'u@miyura.com', fullName: 'Usuario', role: 'STUDENT', companyId: null },
+      role: 'STUDENT',
+      login: () => undefined,
+      logout: () => undefined,
+    }),
+  }
+})
+vi.mock('@/lib/notify')
 
 function renderPage(offerId = 1) {
   return render(
@@ -92,6 +107,7 @@ describe('OfferApplicationsPage — mensajes de error de carga (F-1b)', () => {
     vi.clearAllMocks()
     vi.mocked(offersApi.getOffer).mockResolvedValue(offer)
     vi.mocked(companiesApi.listApplicationsForOffer).mockResolvedValue([])
+    vi.mocked(notify.confirmar).mockResolvedValue(true)
   })
 
   describe.each([
@@ -129,3 +145,273 @@ describe('OfferApplicationsPage — mensajes de error de carga (F-1b)', () => {
     expect(screen.getByText('Acceso restringido o no disponible')).toBeInTheDocument()
   })
 })
+
+// UX-1: aceptar una postulación consume un cupo y la decisión no se puede deshacer: pide confirmación.
+describe('OfferApplicationsPage — confirmar al aceptar (UX-1)', () => {
+  const offer = {
+    id: 1,
+    companyId: 5,
+    title: 'Oferta de prueba',
+    description: 'd',
+    modality: 'PRESENCIAL',
+    seats: 3,
+    requiredHours: 240,
+    periodStart: '2026-03-01',
+    periodEnd: '2026-07-31',
+    status: 'PUBLISHED',
+    publishedAt: null,
+    company: { id: 5, name: 'Empresa', sector: 'TI' },
+  } as never
+  const application = {
+    id: 9,
+    offerId: 1,
+    studentId: 2,
+    status: 'SUBMITTED',
+    motivation: 'quiero postular',
+    submittedAt: '2026-03-02',
+    decidedAt: null,
+    student: { id: 2, email: 'e@miyura.com', fullName: 'Estudiante Prueba' },
+  } as never
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(offersApi.getOffer).mockResolvedValue(offer)
+    vi.mocked(companiesApi.listApplicationsForOffer).mockResolvedValue([application])
+    vi.mocked(companiesApi.decideApplication).mockResolvedValue(undefined as never)
+    vi.mocked(notify.exito).mockResolvedValue(undefined as never)
+  })
+
+  it('pregunta con el nombre de la persona y los cupos que quedan, antes de decidir', async () => {
+    vi.mocked(notify.confirmar).mockResolvedValue(false)
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+    await waitFor(() => expect(notify.confirmar).toHaveBeenCalledTimes(1))
+    const options = vi.mocked(notify.confirmar).mock.calls[0][0]
+    expect(options.titulo).toContain('Estudiante Prueba')
+    expect(options.texto).toContain('quedarán 2 de 3 cupos')
+    expect(options.texto).toContain('no se puede deshacer')
+  })
+
+  it('si se cancela, no se envía la decisión ni se muestra un aviso de éxito', async () => {
+    vi.mocked(notify.confirmar).mockResolvedValue(false)
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+    await waitFor(() => expect(notify.confirmar).toHaveBeenCalled())
+
+    expect(companiesApi.decideApplication).not.toHaveBeenCalled()
+    expect(notify.exito).not.toHaveBeenCalled()
+  })
+
+  it('si se confirma, se decide exactamente una vez y se avisa del éxito', async () => {
+    vi.mocked(notify.confirmar).mockResolvedValue(true)
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+    await waitFor(() => expect(notify.exito).toHaveBeenCalledTimes(1))
+    expect(companiesApi.decideApplication).toHaveBeenCalledTimes(1)
+    expect(companiesApi.decideApplication).toHaveBeenCalledWith(9, 'ACCEPTED')
+    expect(vi.mocked(notify.exito).mock.calls[0][0]).toContain('Estudiante Prueba')
+  })
+
+  it('un doble clic mientras la confirmación está abierta no abre dos preguntas ni decide dos veces', async () => {
+    let resolveConfirm!: (value: boolean) => void
+    vi.mocked(notify.confirmar).mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        resolveConfirm = resolve
+      }),
+    )
+    renderPage()
+    const button = await screen.findByRole('button', { name: 'Aceptar' })
+
+    fireEvent.click(button)
+    fireEvent.click(button)
+    resolveConfirm(true)
+
+    await waitFor(() => expect(companiesApi.decideApplication).toHaveBeenCalledTimes(1))
+    expect(notify.confirmar).toHaveBeenCalledTimes(1)
+  })
+
+  it('descartar o pasar a entrevista no pide confirmación (se pueden revisar después)', async () => {
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Entrevista' }))
+
+    await waitFor(() => expect(companiesApi.decideApplication).toHaveBeenCalledWith(9, 'INTERVIEW'))
+    expect(notify.confirmar).not.toHaveBeenCalled()
+  })
+
+  // UX-2: el error del servidor salía en línea ARRIBA de la lista, fuera de la vista de quien está en el botón.
+  // Ahora se muestra en un aviso que la persona tiene que leer.
+  describe('cuando el servidor rechaza la decisión (UX-2)', () => {
+    beforeEach(() => {
+      vi.mocked(notify.confirmar).mockResolvedValue(true)
+      vi.mocked(notify.error).mockResolvedValue(undefined as never)
+    })
+
+    it.each([
+      ['un 400 del servidor, con su mensaje', new ApiError(400, 'la oferta ya no tiene cupos'), 'la oferta ya no tiene cupos'],
+      ['un 403 de otra empresa', new ApiError(403, 'x'), 'No puedes decidir postulaciones de ofertas que pertenecen a otra empresa.'],
+      ['un error que no es de la API, con el mensaje por defecto', new TypeError('red'), 'No se pudo enviar la decisión'],
+    ])('aceptar: con %s muestra un aviso de error y no un mensaje en línea', async (_caso, failure, texto) => {
+      vi.mocked(companiesApi.decideApplication).mockRejectedValue(failure)
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+      await waitFor(() => expect(notify.error).toHaveBeenCalledTimes(1))
+      expect(notify.error).toHaveBeenCalledWith('No se pudo aceptar la postulación', texto)
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(notify.exito).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['Descartar', 'No se pudo descartar la postulación'],
+      ['Entrevista', 'No se pudo pasar la postulación a entrevista'],
+    ])('%s: el título del aviso dice qué acción falló', async (boton, titulo) => {
+      vi.mocked(companiesApi.decideApplication).mockRejectedValue(new ApiError(400, 'la postulación ya fue decidida'))
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: boton }))
+
+      await waitFor(() => expect(notify.error).toHaveBeenCalledWith(titulo, 'la postulación ya fue decidida'))
+    })
+
+    it('si la decisión sale bien no se muestra ningún aviso de error', async () => {
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+      await waitFor(() => expect(notify.exito).toHaveBeenCalledTimes(1))
+      expect(notify.error).not.toHaveBeenCalled()
+    })
+
+    it('los botones siguen deshabilitados mientras el aviso de error está abierto y se habilitan al cerrarlo', async () => {
+      let closeNotice!: () => void
+      vi.mocked(notify.error).mockReturnValue(
+        new Promise<void>((resolve) => {
+          closeNotice = resolve
+        }),
+      )
+      vi.mocked(companiesApi.decideApplication).mockRejectedValue(new ApiError(400, 'la oferta ya no tiene cupos'))
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+      await waitFor(() => expect(notify.error).toHaveBeenCalled())
+      expect(screen.getByRole('button', { name: 'Aceptando…' })).toBeDisabled()
+
+      closeNotice()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Aceptar' })).not.toBeDisabled())
+    })
+
+    it('los botones se habilitan de nuevo cuando la persona cierra el aviso de error', async () => {
+      vi.mocked(companiesApi.decideApplication).mockRejectedValue(new ApiError(400, 'la oferta ya no tiene cupos'))
+      renderPage()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+      await waitFor(() => expect(notify.error).toHaveBeenCalled())
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Aceptar' })).not.toBeDisabled())
+    })
+
+    // UX-10: si el servidor rechaza porque la postulación ya cambió (otra pestaña, otra persona), la lista que se ve
+    // está vieja: sin recargar, los botones siguen ahí hasta que se refresque a mano.
+    describe('recarga de la lista tras un rechazo (UX-10)', () => {
+      const decided = { ...(application as object), status: 'REJECTED', decidedAt: '2026-03-03' } as never
+
+      it('ante un 400 (la postulación ya fue decidida) recarga la lista y muestra su estado real', async () => {
+        vi.mocked(companiesApi.listApplicationsForOffer).mockResolvedValueOnce([application]).mockResolvedValue([decided])
+        vi.mocked(companiesApi.decideApplication).mockRejectedValue(new ApiError(400, 'la postulación ya fue decidida'))
+        renderPage()
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+        await waitFor(() => expect(companiesApi.listApplicationsForOffer).toHaveBeenCalledTimes(2))
+        await waitFor(() => expect(notify.error).toHaveBeenCalledTimes(1))
+        await waitFor(() => expect(screen.queryByRole('button', { name: 'Aceptar' })).toBeNull())
+      })
+
+      it.each([
+        ['un 403', new ApiError(403, 'x')],
+        ['un error que no es de la API', new TypeError('red')],
+      ])('con %s no recarga: no hay motivo para creer que la lista cambió', async (_caso, failure) => {
+        vi.mocked(companiesApi.decideApplication).mockRejectedValue(failure)
+        renderPage()
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Aceptar' }))
+
+        await waitFor(() => expect(notify.error).toHaveBeenCalledTimes(1))
+        expect(companiesApi.listApplicationsForOffer).toHaveBeenCalledTimes(1)
+      })
+    })
+  })
+})
+
+// REDISEÑO-5: la tabla de postulaciones también pagina, con las filas por página que elige cada persona.
+describe('OfferApplicationsPage — filas por página', () => {
+  const offer = {
+    id: 1,
+    companyId: 5,
+    title: 'Oferta de prueba',
+    description: 'd',
+    modality: 'PRESENCIAL',
+    seats: 30,
+    requiredHours: 240,
+    periodStart: '2026-03-01',
+    periodEnd: '2026-07-31',
+    status: 'PUBLISHED',
+    publishedAt: null,
+    company: { id: 5, name: 'Empresa', sector: 'TI' },
+  } as never
+  const applications = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      id: i + 1,
+      offerId: 1,
+      studentId: 100 + i,
+      status: 'SUBMITTED',
+      motivation: 'quiero postular',
+      submittedAt: '2026-03-02',
+      decidedAt: null,
+      student: { id: 100 + i, email: `e${i}@miyura.com`, fullName: `Candidato ${i + 1}` },
+    })) as never
+  const rowsShown = () => screen.queryAllByText(/^Candidato \d+$/)
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    vi.mocked(offersApi.getOffer).mockResolvedValue(offer)
+  })
+
+  it('por defecto muestra 10 candidatos por página', async () => {
+    vi.mocked(companiesApi.listApplicationsForOffer).mockResolvedValue(applications(12))
+    renderPage()
+
+    await waitFor(() => expect(rowsShown()).toHaveLength(10))
+    expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
+  })
+
+  it('al elegir 5 filas por página muestra 5', async () => {
+    const user = userEvent.setup()
+    vi.mocked(companiesApi.listApplicationsForOffer).mockResolvedValue(applications(12))
+    renderPage()
+    await waitFor(() => expect(rowsShown()).toHaveLength(10))
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filas por página' }), '5')
+
+    expect(rowsShown()).toHaveLength(5)
+    expect(screen.getByText('Página 1 de 3')).toBeInTheDocument()
+  })
+
+  it('con pocas postulaciones se ven todas', async () => {
+    vi.mocked(companiesApi.listApplicationsForOffer).mockResolvedValue(applications(3))
+    renderPage()
+
+    await waitFor(() => expect(rowsShown()).toHaveLength(3))
+    expect(screen.queryByRole('button', { name: 'Siguiente' })).toBeNull()
+  })
+})
+

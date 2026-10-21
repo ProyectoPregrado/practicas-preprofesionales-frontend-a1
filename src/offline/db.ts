@@ -34,6 +34,9 @@ export interface LocalDocument {
   placementId: number
   kind: string
   filename: string
+  /** Llegan con la sincronización desde DOC-1; los documentos guardados antes en este dispositivo pueden no tenerlos. */
+  mimeType?: string
+  size?: number
   status: string
   version: number
   updatedAt: string

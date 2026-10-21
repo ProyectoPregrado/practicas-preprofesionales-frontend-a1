@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { HourLogsPage } from './HourLogsPage'
 import * as placementHooks from '@/offline/hooks/usePlacement'
 import * as hourLogsHooks from '@/offline/hooks/useHourLogs'
@@ -8,6 +8,18 @@ import type { LocalHourLog, LocalPlacement } from '@/offline/db'
 
 vi.mock('@/offline/hooks/usePlacement')
 vi.mock('@/offline/hooks/useHourLogs')
+vi.mock('@/auth/AuthContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/auth/AuthContext')>()
+  return {
+    ...actual,
+    useAuth: () => ({
+      user: { id: 10, email: 'u@miyura.com', fullName: 'Usuario', role: 'STUDENT', companyId: null },
+      role: 'STUDENT',
+      login: () => undefined,
+      logout: () => undefined,
+    }),
+  }
+})
 
 describe('HourLogsPage', () => {
   it('muestra el badge y mensaje de fallo permanente cuando syncState es failed', () => {
@@ -163,5 +175,324 @@ describe('HourLogsPage', () => {
       expect(screen.getByText(/1000\.0\s*\/\s*240\s*aprobadas/)).toBeInTheDocument()
       expect(screen.getByText(/1000\.0\s*sin aprobar/)).toBeInTheDocument()
     })
+  })
+})
+
+// REDISEÑO-4: el libro de horas como panel (progreso, indicadores, filtros, tabla y estado de sincronización), con
+// datos reales. Los filtros trabajan sobre los registros que ya están en el dispositivo; los totales, siempre sobre todos.
+describe('libro de horas rediseñado (REDISEÑO-4)', () => {
+  const placement: LocalPlacement = {
+    id: 1,
+    studentId: 10,
+    tutorId: 2,
+    companyId: 3,
+    startDate: '2026-03-01',
+    endDate: '2026-07-31',
+    requiredHours: 240,
+    status: 'ACTIVE',
+    version: 1,
+    updatedAt: '2026-03-01T00:00:00.000Z',
+  }
+
+  const entry = (
+    id: number,
+    date: string,
+    activity: string,
+    status: LocalHourLog['status'],
+    syncState: LocalHourLog['syncState'],
+  ): LocalHourLog => ({
+    id,
+    placementId: 1,
+    date,
+    startTime: '08:00',
+    endTime: '12:00',
+    hours: 4,
+    activity,
+    status,
+    syncState,
+    version: 1,
+    updatedAt: '2026-04-01T12:00:00.000Z',
+  })
+
+  // El hook los entrega de más antiguo a más reciente.
+  const logs = [
+    entry(1, '2026-03-30', 'Reunión de arranque', 'APPROVED', 'synced'),
+    entry(2, '2026-04-01', 'Optimización de consultas', 'SUBMITTED', 'queued'),
+    entry(3, '2026-04-07', 'Pruebas unitarias', 'REJECTED', 'failed'),
+    entry(4, '2026-04-10', 'Documentación de endpoints', 'SUBMITTED', 'local'),
+  ]
+
+  function renderPage(data: LocalHourLog[] = logs) {
+    vi.mocked(placementHooks.usePlacement).mockReturnValue(placement)
+    vi.mocked(hourLogsHooks.useHourLogs).mockReturnValue(data)
+    return render(<HourLogsPage />)
+  }
+
+  it('el encabezado presenta el libro y deja registrar horas', () => {
+    renderPage()
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Libro de horas' })).toBeInTheDocument()
+    expect(screen.getByText(/Se guarda en este dispositivo aunque no haya señal/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Registrar horas' })).toBeInTheDocument()
+  })
+
+  it('la tarjeta de progreso dice la meta y reparte las horas aprobadas, sin revisar y restantes', () => {
+    renderPage()
+
+    const card = screen.getByRole('region', { name: 'Progreso del ciclo práctico' })
+    expect(within(card).getByText('Meta: 240 horas')).toBeInTheDocument()
+    const legend = within(card).getByRole('list', { name: 'Reparto de las horas' })
+    expect(within(legend).getByText('4.0 h')).toBeInTheDocument()
+    expect(within(legend).getByText('8.0 h')).toBeInTheDocument()
+    expect(within(legend).getByText('228.0 h')).toBeInTheDocument()
+  })
+
+  it('los indicadores muestran aprobadas, en revisión, registros con su rango de fechas y el promedio por día', () => {
+    renderPage()
+
+    const kpis = screen.getByRole('list', { name: 'Indicadores' })
+    const card = (label: string) => within(within(kpis).getByText(label).closest('li') as HTMLElement)
+    expect(card('Horas aprobadas').getByText('4.0')).toBeInTheDocument()
+    expect(card('En revisión').getByText('8.0')).toBeInTheDocument()
+    expect(card('En revisión').getByText('2 registros')).toBeInTheDocument()
+    expect(card('Registros').getByText('Del 30 mar 2026 al 10 abr 2026')).toBeInTheDocument()
+    expect(card('Promedio diario').getByText('4.0')).toBeInTheDocument()
+    expect(card('Promedio diario').getByText('por día registrado')).toBeInTheDocument()
+  })
+
+  describe('filtros', () => {
+    it('ofrece los estados con su conteo; «Todos» está activo al empezar y no hay «Borradores» si no hay ninguno', () => {
+      renderPage()
+
+      const group = screen.getByRole('group', { name: 'Filtrar por estado' })
+      expect(within(group).getByRole('button', { name: 'Todos (4)' })).toHaveAttribute('aria-pressed', 'true')
+      expect(within(group).getByRole('button', { name: 'Aprobadas (1)' })).toHaveAttribute('aria-pressed', 'false')
+      expect(within(group).getByRole('button', { name: 'En revisión (2)' })).toBeInTheDocument()
+      expect(within(group).getByRole('button', { name: 'Rechazadas (1)' })).toBeInTheDocument()
+      expect(within(group).queryByRole('button', { name: /Borradores/ })).toBeNull()
+    })
+
+    it('al elegir un estado solo quedan esos registros y el conteo de la tabla se ajusta', async () => {
+      const user = userEvent.setup()
+      renderPage()
+
+      await user.click(screen.getByRole('button', { name: 'En revisión (2)' }))
+
+      expect(screen.getByRole('button', { name: 'En revisión (2)' })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByText('Optimización de consultas')).toBeInTheDocument()
+      expect(screen.getByText('Documentación de endpoints')).toBeInTheDocument()
+      expect(screen.queryByText('Pruebas unitarias')).toBeNull()
+      expect(screen.getByText('2 registros', { selector: '[data-testid="table-count"]' })).toBeInTheDocument()
+    })
+
+    it('la búsqueda filtra por actividad sin distinguir mayúsculas ni tildes', async () => {
+      const user = userEvent.setup()
+      renderPage()
+
+      await user.type(screen.getByRole('searchbox', { name: 'Buscar en el libro' }), 'OPTIMIZACION')
+
+      expect(screen.getByText('Optimización de consultas')).toBeInTheDocument()
+      expect(screen.queryByText('Reunión de arranque')).toBeNull()
+    })
+
+    it('el selector de mes lista solo los meses con registros y filtra por el elegido', async () => {
+      const user = userEvent.setup()
+      renderPage()
+      const month = screen.getByRole('combobox', { name: 'Mes' })
+
+      expect(within(month).getAllByRole('option').map((option) => option.textContent)).toEqual([
+        'Todos los meses',
+        'Abril 2026',
+        'Marzo 2026',
+      ])
+      await user.selectOptions(month, '2026-03')
+
+      expect(screen.getByText('Reunión de arranque')).toBeInTheDocument()
+      expect(screen.queryByText('Pruebas unitarias')).toBeNull()
+    })
+
+    it('si nada coincide lo dice y «Quitar filtros» devuelve todos los registros', async () => {
+      const user = userEvent.setup()
+      renderPage()
+
+      await user.type(screen.getByRole('searchbox', { name: 'Buscar en el libro' }), 'zzz')
+      expect(screen.getByText('Ningún registro coincide con los filtros')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Quitar filtros' }))
+
+      expect(screen.getByText('Pruebas unitarias')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Todos (4)' })).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    it('filtrar no cambia los totales: el resumen sigue contando todos los registros', async () => {
+      const user = userEvent.setup()
+      renderPage()
+
+      await user.click(screen.getByRole('button', { name: 'Aprobadas (1)' }))
+
+      const legend = screen.getByRole('list', { name: 'Reparto de las horas' })
+      expect(within(legend).getByText('8.0 h')).toBeInTheDocument()
+    })
+
+    it('al cambiar de filtro vuelve a la primera página', async () => {
+      const user = userEvent.setup()
+      const many = Array.from({ length: 25 }, (_, i) =>
+        entry(i + 1, `2026-04-${String((i % 28) + 1).padStart(2, '0')}`, `Tarea ${i + 1}`, i % 2 === 0 ? 'APPROVED' : 'SUBMITTED', 'synced'),
+      )
+      renderPage(many)
+
+      await user.click(screen.getByRole('button', { name: 'Siguiente' }))
+      expect(screen.getByText('Página 2 de 3')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Aprobadas (13)' }))
+
+      expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
+    })
+  })
+
+  describe('tabla', () => {
+    it('cada fila muestra el día, el mes, el día de la semana y las horas', () => {
+      renderPage()
+
+      expect(screen.getByText('Miércoles')).toBeInTheDocument()
+      expect(screen.getByText('Lunes')).toBeInTheDocument()
+      expect(screen.getAllByText('4.0 h').length).toBeGreaterThanOrEqual(4)
+    })
+
+    it('conserva el indicador de sincronización de cada fila', () => {
+      renderPage()
+
+      expect(screen.getByRole('img', { name: 'Sincronizado' })).toBeInTheDocument()
+      expect(screen.getByRole('img', { name: 'En cola' })).toBeInTheDocument()
+      expect(screen.getByRole('img', { name: 'Sin sincronizar' })).toBeInTheDocument()
+      expect(screen.getByRole('img', { name: 'Rechazado (fallo permanente)' })).toBeInTheDocument()
+    })
+  })
+
+  describe('estado de sincronización', () => {
+    it('avisa cuántos registros esperan sincronizarse y, aparte, cuántos tuvieron un fallo permanente', () => {
+      renderPage()
+
+      // En cola y sin sincronizar esperan; el rechazado definitivamente no «espera»: ya no se reintenta.
+      expect(screen.getByText('2 registros esperan sincronizarse con el servidor')).toBeInTheDocument()
+      expect(screen.getByText('1 registro con fallo permanente')).toBeInTheDocument()
+    })
+
+    it('si todo está sincronizado lo dice', () => {
+      renderPage(logs.map((item) => ({ ...item, syncState: 'synced' as const })))
+
+      expect(screen.getByText('Todos tus registros están sincronizados')).toBeInTheDocument()
+    })
+
+    it('con un solo registro pendiente habla en singular', () => {
+      renderPage([entry(1, '2026-04-01', 'Tarea única', 'SUBMITTED', 'local')])
+
+      expect(screen.getByText('1 registro espera sincronizarse con el servidor')).toBeInTheDocument()
+    })
+  })
+})
+
+// REDISEÑO-5: cada persona elige cuántas filas ve por página (5 a 30, de 5 en 5) y se le recuerda.
+describe('libro de horas — filas por página', () => {
+  const placement: LocalPlacement = {
+    id: 1,
+    studentId: 10,
+    tutorId: 2,
+    companyId: 3,
+    startDate: '2026-01-01',
+    endDate: '2026-06-01',
+    requiredHours: 240,
+    status: 'ACTIVE',
+    version: 1,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+  const logs = (count: number): LocalHourLog[] =>
+    Array.from({ length: count }, (_, i) => ({
+      id: i + 1,
+      placementId: 1,
+      date: `2026-04-${String((i % 28) + 1).padStart(2, '0')}`,
+      startTime: '08:00',
+      endTime: '12:00',
+      hours: 4,
+      activity: `Fila ${i + 1}`,
+      status: 'APPROVED' as const,
+      syncState: 'synced' as const,
+      version: 1,
+      updatedAt: '2026-04-01T12:00:00.000Z',
+    }))
+  const rowsShown = () => screen.queryAllByText(/^Fila \d+$/)
+
+  function renderWith(count: number) {
+    vi.mocked(placementHooks.usePlacement).mockReturnValue(placement)
+    vi.mocked(hourLogsHooks.useHourLogs).mockReturnValue(logs(count))
+    return render(<HourLogsPage />)
+  }
+
+  beforeEach(() => localStorage.clear())
+
+  it('por defecto muestra 10 filas y deja elegir de 5 en 5 hasta 30', () => {
+    renderWith(25)
+
+    expect(rowsShown()).toHaveLength(10)
+    const select = screen.getByRole('combobox', { name: 'Filas por página' })
+    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual(['5', '10', '15', '20', '25', '30'])
+  })
+
+  it('al elegir 5 muestra 5 filas, recalcula las páginas y lo recuerda para este usuario', async () => {
+    const user = userEvent.setup()
+    renderWith(25)
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filas por página' }), '5')
+
+    expect(rowsShown()).toHaveLength(5)
+    expect(screen.getByText('Página 1 de 5')).toBeInTheDocument()
+    expect(localStorage.getItem('pageSize:10')).toBe('5')
+  })
+
+  it('al elegir 30 caben las 25 filas de una vez y desaparecen Anterior y Siguiente', async () => {
+    const user = userEvent.setup()
+    renderWith(25)
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filas por página' }), '30')
+
+    expect(rowsShown()).toHaveLength(25)
+    expect(screen.queryByRole('button', { name: 'Siguiente' })).toBeNull()
+  })
+
+  it('al cambiar el tamaño estando en otra página vuelve a la primera', async () => {
+    const user = userEvent.setup()
+    renderWith(25)
+    await user.click(screen.getByRole('button', { name: 'Siguiente' }))
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Filas por página' }), '15')
+
+    expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
+  })
+
+  it('usa la preferencia guardada de este usuario al abrir la pantalla', () => {
+    localStorage.setItem('pageSize:10', '20')
+    renderWith(25)
+
+    expect(rowsShown()).toHaveLength(20)
+    expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
+  })
+
+  it('la preferencia de otro usuario no se aplica', () => {
+    localStorage.setItem('pageSize:99', '30')
+    renderWith(25)
+
+    expect(rowsShown()).toHaveLength(10)
+  })
+
+  it('con 5 o menos registros no hay nada que elegir: no aparece el selector', () => {
+    renderWith(5)
+
+    expect(screen.queryByRole('combobox', { name: 'Filas por página' })).toBeNull()
+  })
+
+  it('con 6 a 10 registros sí aparece el selector, aunque no haya más de una página', () => {
+    renderWith(8)
+
+    expect(screen.getByRole('combobox', { name: 'Filas por página' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Siguiente' })).toBeNull()
   })
 })
