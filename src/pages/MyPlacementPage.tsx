@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { BookOpen, CheckCircle2, Hourglass, ShieldCheck } from 'lucide-react'
+import { BookOpen, ShieldCheck } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Chip } from '@/components/Chip'
 import { PageHeader } from '@/components/PageHeader'
@@ -7,6 +7,8 @@ import { EmptyState, LoadingState, Section } from '@/components/Panel'
 import { NewHourLogDialog } from '@/components/hour-log/NewHourLogDialog'
 import { HoursHeroCard } from '@/components/placement/HoursHeroCard'
 import { KpiCard } from '@/components/placement/KpiCard'
+import { KpiGrid } from '@/components/placement/KpiGrid'
+import { ApprovedHoursKpi, PendingHoursKpi } from '@/components/placement/HoursKpis'
 import { RequirementsList } from '@/components/placement/RequirementsList'
 import { WeeklyHoursChart } from '@/components/placement/WeeklyHoursChart'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -59,20 +61,10 @@ function PlacementKpis({
   const average = averagePerRegisteredDay(logs)
 
   return (
-    <ul aria-label="Indicadores" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <KpiCard
-        label="Horas aprobadas"
-        value={hours.approvedHours.toFixed(1)}
-        unit={`/ ${hours.requiredHours} h`}
-        icon={CheckCircle2}
-        footnote={`${Math.round(hours.approvedPct)} % de la meta`}
-      />
-      <KpiCard
-        label="Sin revisar"
-        value={hours.submittedHours.toFixed(1)}
-        unit="h"
-        icon={Hourglass}
-        tone="pending"
+    <KpiGrid>
+      <ApprovedHoursKpi hours={hours} footnote={`${Math.round(hours.approvedPct)} % de la meta`} />
+      <PendingHoursKpi
+        hours={hours}
         footnote={
           <>
             <span className="rounded-full bg-chipPending px-2 py-0.5 text-11 font-semibold text-pending">
@@ -98,7 +90,7 @@ function PlacementKpis({
         tone="soft"
         footnote={average === null ? 'Aún sin registros' : `${average.toFixed(1)} h por día registrado`}
       />
-    </ul>
+    </KpiGrid>
   )
 }
 

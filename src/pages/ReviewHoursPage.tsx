@@ -3,8 +3,13 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError, api } from '@/api/client'
 import { useAuth } from '@/auth/AuthContext'
-import { HoursProgressPanel } from '@/components/HoursProgressPanel'
+import { CalendarDays, Undo2 } from 'lucide-react'
+import { FilterTabs } from '@/components/FilterTabs'
 import { PageHeader } from '@/components/PageHeader'
+import { ProgressBar } from '@/components/ProgressBar'
+import { KpiCard } from '@/components/placement/KpiCard'
+import { KpiGrid } from '@/components/placement/KpiGrid'
+import { ApprovedHoursKpi, PendingHoursKpi } from '@/components/placement/HoursKpis'
 import { EmptyState, LoadingState, Panel } from '@/components/Panel'
 import { Pagination } from '@/components/Pagination'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -23,7 +28,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Ledger, LedgerHeaderRow } from '@/components/ledger/Ledger'
 import { LedgerRow } from '@/components/ledger/LedgerRow'
 import { parseLocalDate } from '@/lib/date'
-import { summarizeHours } from '@/lib/hours'
+import { type HoursSummary, summarizeHours } from '@/lib/hours'
+import { type StatusFilter, countByStatus } from '@/lib/hourLogFilters'
 import { describeError } from '@/lib/describeError'
 import { confirmar, error as notifyError, exito } from '@/lib/notify'
 import { plural } from '@/lib/utils'
@@ -91,12 +97,17 @@ function ReviewActions({ log, state, onApprove, onReject }: ReviewActionsProps) 
 
 interface ReviewListProps {
   logs: LocalHourLog[]
+  /** Hay un filtro de estado activo: la lista vacía no significa que no haya nada que revisar. */
+  filtered: boolean
   actionState: Record<number, ActionState>
   onApprove: (log: LocalHourLog) => void
   onReject: (log: LocalHourLog) => void
 }
 
-function ReviewList({ logs, actionState, onApprove, onReject }: ReviewListProps) {
+function ReviewList({ logs, filtered, actionState, onApprove, onReject }: ReviewListProps) {
+  if (logs.length === 0 && filtered) {
+    return <EmptyState title="Ningún registro con este estado" description="Elige «Todos» para ver el libro completo." />
+  }
   if (logs.length === 0) {
     return (
       <EmptyState
@@ -228,13 +239,56 @@ function RejectDialog({ log, onCancel, onConfirm }: RejectDialogProps) {
   )
 }
 
-function pendingNote(pendingCount: number) {
-  if (pendingCount === 0) return null
+type ReviewFilter = Exclude<StatusFilter, 'DRAFT'>
+
+// Los borradores no llegan al tutor: no tiene sentido un filtro para ellos.
+const REVIEW_FILTERS: { value: ReviewFilter; label: string }[] = [
+  { value: 'ALL', label: 'Todos' },
+  { value: 'SUBMITTED', label: 'Sin revisar' },
+  { value: 'APPROVED', label: 'Aprobados' },
+  { value: 'REJECTED', label: 'Devueltos' },
+]
+
+interface ReviewKpisProps {
+  hours: HoursSummary
+  counts: Record<StatusFilter, number>
+  lastLogDate: string | null
+}
+
+/** Indicadores del practicante: avance, lo que espera, lo devuelto y la última actividad. */
+function ReviewKpis({ hours, counts, lastLogDate }: ReviewKpisProps) {
   return (
-    <span className="text-pending">
-      {' '}
-      · {plural(pendingCount, 'registro', 'registros')} sin revisar
-    </span>
+    <KpiGrid>
+      <ApprovedHoursKpi
+        hours={hours}
+        footnote={
+          <ProgressBar
+            value={hours.approvedPct}
+            pendingValue={hours.submittedPct}
+            label="Progreso de horas aprobadas"
+          />
+        }
+      />
+      <PendingHoursKpi
+        hours={hours}
+        footnote={plural(counts.SUBMITTED, 'registro espera tu decisión', 'registros esperan tu decisión')}
+      />
+      <KpiCard
+        label="Devueltos"
+        value={String(counts.REJECTED)}
+        unit={counts.REJECTED === 1 ? 'registro' : 'registros'}
+        icon={Undo2}
+        tone="soft"
+        footnote="Esperan la corrección del estudiante"
+      />
+      <KpiCard
+        label="Último registro"
+        value={lastLogDate ? formatDate(lastLogDate) : '—'}
+        icon={CalendarDays}
+        tone="soft"
+        footnote={plural(counts.ALL - counts.DRAFT, 'registro en el libro', 'registros en el libro')}
+      />
+    </KpiGrid>
   )
 }
 
@@ -263,8 +317,13 @@ export function ReviewHoursPage() {
     [placementId],
   )
 
+  const [statusFilter, setStatusFilter] = useState<ReviewFilter>('ALL')
+
   // Más recientes primero; el hook los entrega de más antiguo a más reciente. Se paginan (5 a 30 filas, a elección del usuario).
-  const newestFirst = useMemo(() => logs?.slice().reverse(), [logs])
+  const newestFirst = useMemo(
+    () => logs?.filter((log) => statusFilter === 'ALL' || log.status === statusFilter).reverse(),
+    [logs, statusFilter],
+  )
   const { visibleItems: visibleLogs, pagination } = usePagination(newestFirst)
 
   const [actionState, setActionState] = useState<Record<number, ActionState>>({})
@@ -361,13 +420,14 @@ export function ReviewHoursPage() {
   }
 
   const hours = summarizeHours(logs, placement.requiredHours)
-  const pendingCount = logs.filter((log) => log.status === 'SUBMITTED').length
+  const counts = countByStatus(logs)
+  const pendingCount = counts.SUBMITTED
 
   return (
     <>
       <PageHeader
         title="Horas del practicante"
-        subtitle={`Estudiante #${placement.studentId} · Empresa #${placement.companyId}`}
+        subtitle={`Estudiante #${placement.studentId} · Empresa #${placement.companyId} · ${formatDate(placement.startDate)} – ${formatDate(placement.endDate)}`}
         actions={
           <>
             <Button asChild variant="outline">
@@ -380,17 +440,27 @@ export function ReviewHoursPage() {
         }
       />
 
-      <HoursProgressPanel hours={hours} note={pendingNote(pendingCount)} />
+      <ReviewKpis hours={hours} counts={counts} lastLogDate={logs.at(-1)?.date ?? null} />
 
       <Panel
         toolbar={
-          <span className="ml-auto font-data text-12 text-inkSoft">
-            {plural(pendingCount, 'registro', 'registros')} sin revisar
-          </span>
+          <>
+            <FilterTabs
+              label="Filtrar por estado"
+              surface="well"
+              options={REVIEW_FILTERS.map(({ value, label }) => ({ value, label: `${label} · ${counts[value]}` }))}
+              value={statusFilter}
+              onChange={(value) => setStatusFilter(value as ReviewFilter)}
+            />
+            <span className="ml-auto font-data text-12 text-inkSoft">
+              {plural(pendingCount, 'registro', 'registros')} sin revisar
+            </span>
+          </>
         }
       >
         <ReviewList
           logs={visibleLogs}
+          filtered={statusFilter !== 'ALL'}
           actionState={actionState}
           onApprove={approve}
           onReject={setRejectingLog}
