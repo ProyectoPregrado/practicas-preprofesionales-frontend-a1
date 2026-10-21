@@ -12,6 +12,7 @@ import { MyApplicationsPage } from '@/pages/MyApplicationsPage'
 import { DocumentsPage } from '@/pages/DocumentsPage'
 import { MyStudentsPage } from '@/pages/MyStudentsPage'
 import { ReviewHoursPage } from '@/pages/ReviewHoursPage'
+import { StudentDocumentsPage } from '@/pages/StudentDocumentsPage'
 import { EvaluatePage } from '@/pages/EvaluatePage'
 import { CompanyOffersPage } from '@/pages/CompanyOffersPage'
 import { OfferApplicationsPage } from '@/pages/OfferApplicationsPage'
@@ -42,6 +43,7 @@ const ROUTES: RouteDef[] = [
   { path: '/practicantes', roles: ['TUTOR'], element: <MyStudentsPage /> },
   { path: '/practicantes/:id/horas', roles: ['TUTOR'], element: <ReviewHoursPage /> },
   { path: '/practicantes/:id/evaluar', roles: ['TUTOR'], element: <EvaluatePage /> },
+  { path: '/practicantes/:id/documentos', roles: ['TUTOR'], element: <StudentDocumentsPage /> },
   { path: '/ofertas-empresa', roles: ['COMPANY'], element: <CompanyOffersPage /> },
   { path: '/ofertas-empresa/:id/postulaciones', roles: ['COMPANY'], element: <OfferApplicationsPage /> },
   { path: '/acreditacion', roles: ['COORDINATOR'], element: <AccreditationPage /> },

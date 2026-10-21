@@ -36,8 +36,8 @@ function renderPage() {
   )
 }
 
-// UX-9: el backend guarda hoy solo los datos del documento (nombre, tipo, tamaño); el archivo en sí no se almacena.
-// Por eso el aviso dice «registrado», no «subido», y los errores del servidor salen en un aviso visible.
+// UX-9: los errores del servidor salen en un aviso visible. Desde DOC-1/DOC-2 el archivo se sube de verdad, así que el
+// aviso de éxito dice «subido» (antes decía «registrado» porque solo se guardaban los datos).
 describe('DocumentsPage — avisos (UX-9)', () => {
   const user = userEvent.setup()
 
@@ -75,14 +75,14 @@ describe('DocumentsPage — avisos (UX-9)', () => {
     vi.mocked(notify.error).mockResolvedValue(undefined as never)
   })
 
-  it('al registrar un documento avisa con su nombre, sin decir que el archivo se subió', async () => {
+  it('al subir un documento avisa con su nombre y lo envía al endpoint de subida', async () => {
     await chooseFileAndSubmit()
 
     await waitFor(() => expect(notify.exito).toHaveBeenCalledTimes(1))
-    expect(notify.exito).toHaveBeenCalledWith('Documento «convenio.pdf» registrado')
-    expect(vi.mocked(notify.exito).mock.calls[0][0]).not.toMatch(/subid/i)
+    expect(notify.exito).toHaveBeenCalledWith('Documento «convenio.pdf» subido')
     expect(await db.documents.count()).toBe(1)
     expect(api).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(api).mock.calls[0][0]).toBe('/placements/1/documents/upload')
   })
 
   it('sin archivo seleccionado el error es de campo: sale en línea y no se llama al servidor', async () => {
