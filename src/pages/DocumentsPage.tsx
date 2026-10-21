@@ -1,6 +1,6 @@
 import { type ChangeEvent, type FormEvent, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ApiError, api } from '@/api/client'
+import { api } from '@/api/client'
 import { Chip } from '@/components/Chip'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, LoadingState, Section } from '@/components/Panel'
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { parseLocalDate } from '@/lib/date'
+import { describeError } from '@/lib/describeError'
 import { error as notifyError, exito } from '@/lib/notify'
 import { plural } from '@/lib/utils'
 import { db, type LocalDocument } from '@/offline/db'
@@ -33,14 +34,6 @@ function formatDate(dateValue: string): string {
   const parsed = parseLocalDate(dateValue)
   if (Number.isNaN(parsed.getTime())) return dateValue
   return new Intl.DateTimeFormat('es-EC', { day: '2-digit', month: 'short', year: 'numeric' }).format(parsed)
-}
-
-// Texto del aviso de error; sin texto, el aviso muestra solo el título.
-function getUploadErrorMessage(err: unknown): string | undefined {
-  if (err instanceof ApiError && err.statusCode === 403) {
-    return 'No tienes permiso para subir documentos a esta práctica.'
-  }
-  return err instanceof ApiError ? err.message : undefined
 }
 
 /** Último estado conocido de un tipo de documento, o `null` si no se subió. */
@@ -178,7 +171,10 @@ export function DocumentsPage() {
       // guarda los datos del documento, no el archivo (ver el comentario de `storageKey`).
       exito(`Documento «${file.name}» registrado`)
     } catch (err) {
-      await notifyError('No se pudo subir el documento', getUploadErrorMessage(err))
+      await notifyError(
+        'No se pudo subir el documento',
+        describeError(err, { forbidden: 'No tienes permiso para subir documentos a esta práctica.' }),
+      )
     } finally {
       setUploading(false)
     }

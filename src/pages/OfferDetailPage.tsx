@@ -1,7 +1,6 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { type Application, apply, listMine } from '@/api/applications'
-import { ApiError } from '@/api/client'
 import { type Offer, getOffer } from '@/api/offers'
 import { Tag } from '@/components/Chip'
 import { PageHeader } from '@/components/PageHeader'
@@ -11,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { parseLocalDate } from '@/lib/date'
+import { describeError } from '@/lib/describeError'
 import { confirmar, error as notifyError, exito } from '@/lib/notify'
 import { plural } from '@/lib/utils'
 
@@ -121,13 +121,12 @@ export function OfferDetailPage() {
       .catch((err) => {
         if (!cancelled) {
           setOffer(null)
-          if (err instanceof ApiError && err.statusCode === 404) {
-            setLoadError('Esta oferta no existe o ya no está disponible.')
-          } else if (err instanceof ApiError && err.statusCode === 403) {
-            setLoadError('No tienes permiso para acceder a esta oferta.')
-          } else {
-            setLoadError(err instanceof ApiError ? err.message : 'No se pudo cargar la oferta')
-          }
+          setLoadError(
+            describeError(err, {
+              forbidden: 'No tienes permiso para acceder a esta oferta.',
+              notFound: 'Esta oferta no existe o ya no está disponible.',
+            }) ?? 'No se pudo cargar la oferta',
+          )
         }
       })
 
@@ -171,11 +170,10 @@ export function OfferDetailPage() {
       setExistingApplication(created)
       await exito('Postulación enviada')
     } catch (err) {
-      if (err instanceof ApiError && err.statusCode === 403) {
-        await notifyError('No se pudo enviar la postulación', 'No tienes permiso para postular a esta oferta.')
-      } else {
-        await notifyError('No se pudo enviar la postulación', err instanceof ApiError ? err.message : undefined)
-      }
+      await notifyError(
+        'No se pudo enviar la postulación',
+        describeError(err, { forbidden: 'No tienes permiso para postular a esta oferta.' }),
+      )
     } finally {
       setSubmitting(false)
     }
