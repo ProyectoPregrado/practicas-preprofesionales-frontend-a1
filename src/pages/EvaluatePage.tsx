@@ -1,7 +1,6 @@
 import { type FormEvent, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Link, useParams } from 'react-router-dom'
-import { ApiError } from '@/api/client'
 import { submitEvaluation } from '@/api/evaluations'
 import { useAuth } from '@/auth/AuthContext'
 import { PageHeader } from '@/components/PageHeader'
@@ -11,6 +10,8 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { parseLocalDate } from '@/lib/date'
+import { describeError } from '@/lib/describeError'
+import { confirmar, error as notifyError } from '@/lib/notify'
 import { db, type LocalPlacement } from '@/offline/db'
 
 type ScoreField = 'technical' | 'communication' | 'punctuality'
@@ -56,7 +57,6 @@ export function EvaluatePage() {
   const [comment, setComment] = useState('')
   const [errors, setErrors] = useState<Partial<Record<ScoreField, string>>>({})
   const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState(false)
 
   if (placement === undefined) {
@@ -92,20 +92,10 @@ export function EvaluatePage() {
   }
 
   const period = periodFromStartDate(placement.startDate)
-
-function getEvaluateErrorMessage(err: unknown): string {
-  if (err instanceof ApiError && err.statusCode === 403) {
-    return 'No tienes permiso para evaluar esta práctica porque no eres el tutor asignado.'
-  }
-  if (err instanceof ApiError) {
-    return err.message
-  }
-  return 'No se pudo enviar la evaluación'
-}
+  const { studentId } = placement
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setSubmitError(null)
 
     const nextErrors: Partial<Record<ScoreField, string>> = {}
     for (const { field } of CRITERIA) {
@@ -114,8 +104,18 @@ function getEvaluateErrorMessage(err: unknown): string {
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) return
 
+    // `submitting` cubre también la pregunta: un segundo clic no abre otra confirmación ni envía dos veces.
     setSubmitting(true)
     try {
+      const accepted = await confirmar({
+        titulo: '¿Enviar la evaluación?',
+        texto:
+          `Estudiante #${studentId} · periodo ${period}. Puntajes: técnico ${scores.technical}, ` +
+          `comunicación ${scores.communication}, puntualidad ${scores.punctuality}. ` +
+          'Queda en el acta y no podrás modificarla desde la app.',
+        confirmar: 'Sí, enviar',
+      })
+      if (!accepted) return
       await submitEvaluation({
         placementId,
         kind: 'TUTOR',
@@ -129,7 +129,10 @@ function getEvaluateErrorMessage(err: unknown): string {
       })
       setSubmitted(true)
     } catch (err) {
-      setSubmitError(getEvaluateErrorMessage(err))
+      await notifyError(
+        'No se pudo enviar la evaluación',
+        describeError(err, { forbidden: 'No tienes permiso para evaluar esta práctica porque no eres el tutor asignado.' }),
+      )
     } finally {
       setSubmitting(false)
     }
@@ -207,12 +210,6 @@ function getEvaluateErrorMessage(err: unknown): string {
                 placeholder="Observaciones sobre el desempeño del practicante"
               />
             </div>
-
-            {submitError ? (
-              <p role="alert" className="rounded-md bg-chipVoid px-3 py-2.5 text-13 text-void">
-                {submitError}
-              </p>
-            ) : null}
 
             <Button type="submit" disabled={submitting} className="self-start">
               {submitting ? 'Enviando…' : 'Enviar evaluación'}
