@@ -1,3 +1,5 @@
+import type { HourLogDraft } from '@/api/ai'
+import { DictateDayPanel } from '@/components/ai/DictateDayPanel'
 import { Button } from '@/components/ui/button'
 import {
   DateField,
@@ -34,8 +36,17 @@ export function HourLogForm({ placementId, onSaved }: HourLogFormProps) {
     handleSubmit,
   } = useHourLogForm({ placementId, onSaved })
 
+  // IA-1: el borrador solo llena lo que trae; la persona revisa y guarda como siempre (con las validaciones de siempre).
+  function applyDraft(draft: HourLogDraft) {
+    if (draft.date) setDate(draft.date)
+    if (draft.startTime && draft.endTime) changeTimes(draft.startTime, draft.endTime)
+    if (draft.activity) setActivity(draft.activity)
+  }
+
   return (
     <form className="flex flex-col gap-4" onSubmit={handleSubmit} noValidate>
+      <DictateDayPanel onDraft={applyDraft} />
+
       <DateField
         value={date}
         maxValue={todayAsInputValue()}
