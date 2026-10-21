@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   type Company,
@@ -32,6 +32,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { parseLocalDate } from '@/lib/date'
+import { type ConfirmarOptions, confirmar, error as notifyError, exito } from '@/lib/notify'
 import { plural } from '@/lib/utils'
 
 type OfferActionState = 'publishing' | 'closing' | 'published' | 'closed' | null
@@ -137,8 +138,8 @@ function CompanyOffersStats({ offers }: { offers: CompanyOffer[] }) {
 interface CompanyOfferCardProps {
   offer: CompanyOffer
   state: OfferActionState
-  onPublish: (offerId: number) => void
-  onClose: (offerId: number) => void
+  onPublish: (offer: CompanyOffer) => void
+  onClose: (offer: CompanyOffer) => void
 }
 
 function CompanyOfferCard({ offer, state, onPublish, onClose }: CompanyOfferCardProps) {
@@ -159,7 +160,7 @@ function CompanyOfferCard({ offer, state, onPublish, onClose }: CompanyOfferCard
             <Link to={`/ofertas-empresa/${offer.id}/postulaciones`}>Ver postulaciones</Link>
           </Button>
           {offer.status === 'DRAFT' ? (
-            <Button type="button" size="sm" onClick={() => onPublish(offer.id)} disabled={busy}>
+            <Button type="button" size="sm" onClick={() => onPublish(offer)} disabled={busy}>
               {state === 'publishing' ? 'Publicando…' : 'Publicar'}
             </Button>
           ) : null}
@@ -168,7 +169,7 @@ function CompanyOfferCard({ offer, state, onPublish, onClose }: CompanyOfferCard
               type="button"
               size="sm"
               variant="outline"
-              onClick={() => onClose(offer.id)}
+              onClick={() => onClose(offer)}
               disabled={busy}
             >
               {state === 'closing' ? 'Cerrando…' : 'Cerrar'}
@@ -332,7 +333,8 @@ export function CompanyOffersPage() {
   const [error, setError] = useState<string | null>(null)
 
   const [actionState, setActionState] = useState<Record<number, OfferActionState>>({})
-  const [actionError, setActionError] = useState<string | null>(null)
+  // Evita abrir dos preguntas (y enviar dos veces) con un doble clic mientras la confirmación está abierta.
+  const confirming = useRef(false)
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState<CreateOfferFormState>(EMPTY_FORM)
@@ -391,30 +393,63 @@ function getCloseErrorMessage(err: unknown): string {
 }
 
   async function handlePublish(offerId: number) {
-    setActionError(null)
     setActionState((prev) => ({ ...prev, [offerId]: 'publishing' }))
     try {
       await publishOffer(offerId)
+      exito('Oferta publicada')
       await refetchOffers()
       setActionState((prev) => ({ ...prev, [offerId]: 'published' }))
     } catch (err) {
-      setActionError(getPublishErrorMessage(err))
+      // UX-4: un aviso que la persona tiene que leer (el mensaje en línea quedaba arriba de la lista, fuera de la
+      // vista). Se espera: el botón sigue deshabilitado hasta que se cierra.
+      await notifyError('No se pudo publicar la oferta', getPublishErrorMessage(err))
       setActionState((prev) => ({ ...prev, [offerId]: null }))
     }
   }
 
   async function handleClose(offerId: number) {
-    setActionError(null)
     setActionState((prev) => ({ ...prev, [offerId]: 'closing' }))
     try {
       await closeOffer(offerId)
+      exito('Oferta cerrada')
       await refetchOffers()
       setActionState((prev) => ({ ...prev, [offerId]: 'closed' }))
     } catch (err) {
-      setActionError(getCloseErrorMessage(err))
+      await notifyError('No se pudo cerrar la oferta', getCloseErrorMessage(err))
       setActionState((prev) => ({ ...prev, [offerId]: null }))
     }
   }
+
+  // Publicar y cerrar no tienen vuelta atrás (publicar solo sale de DRAFT y no hay reabrir): piden confirmación.
+  async function confirmThen(options: ConfirmarOptions, run: () => Promise<void>) {
+    if (confirming.current) return
+    confirming.current = true
+    try {
+      if (await confirmar(options)) await run()
+    } finally {
+      confirming.current = false
+    }
+  }
+
+  const confirmPublish = (offer: CompanyOffer) =>
+    confirmThen(
+      {
+        titulo: `¿Publicar «${offer.title}»?`,
+        texto: 'La verán todos los estudiantes y podrán postular. Una vez publicada, no se puede volver a borrador.',
+        confirmar: 'Sí, publicar',
+      },
+      () => handlePublish(offer.id),
+    )
+
+  const confirmClose = (offer: CompanyOffer) =>
+    confirmThen(
+      {
+        titulo: `¿Cerrar «${offer.title}»?`,
+        texto: 'Los estudiantes ya no podrán postular a esta oferta. Una vez cerrada, no se puede reabrir.',
+        confirmar: 'Sí, cerrar',
+      },
+      () => handleClose(offer.id),
+    )
 
   function openDialog() {
     setForm(EMPTY_FORM)
@@ -479,12 +514,6 @@ function getCloseErrorMessage(err: unknown): string {
 
       {offers ? <CompanyOffersStats offers={offers} /> : null}
 
-      {actionError ? (
-        <p role="alert" className="rounded-lg bg-chipVoid px-4 py-3 text-13 text-void">
-          {actionError}
-        </p>
-      ) : null}
-
       <AsyncSection
         error={error}
         data={offers}
@@ -508,8 +537,8 @@ function getCloseErrorMessage(err: unknown): string {
                 key={offer.id}
                 offer={offer}
                 state={actionState[offer.id] ?? null}
-                onPublish={handlePublish}
-                onClose={handleClose}
+                onPublish={confirmPublish}
+                onClose={confirmClose}
               />
             ))}
           </OfferGrid>

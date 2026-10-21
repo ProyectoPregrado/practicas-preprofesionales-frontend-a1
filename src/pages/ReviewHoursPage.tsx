@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError, api } from '@/api/client'
@@ -23,6 +23,7 @@ import { Ledger, LedgerHeaderRow } from '@/components/ledger/Ledger'
 import { LedgerRow } from '@/components/ledger/LedgerRow'
 import { parseLocalDate } from '@/lib/date'
 import { summarizeHours } from '@/lib/hours'
+import { confirmar, error as notifyError, exito } from '@/lib/notify'
 import { plural } from '@/lib/utils'
 import { db, type LocalHourLog, type LocalPlacement } from '@/offline/db'
 import { syncNow } from '@/offline/sync/scheduler'
@@ -59,7 +60,7 @@ function LedgerColumnHeader() {
 interface ReviewActionsProps {
   log: LocalHourLog
   state: ActionState
-  onApprove: (logId: number) => void
+  onApprove: (log: LocalHourLog) => void
   onReject: (log: LocalHourLog) => void
 }
 
@@ -75,7 +76,7 @@ function ReviewActions({ log, state, onApprove, onReject }: ReviewActionsProps) 
   const busy = state === 'approving' || state === 'rejecting'
   return (
     <>
-      <Button type="button" size="sm" onClick={() => onApprove(log.id)} disabled={busy}>
+      <Button type="button" size="sm" onClick={() => onApprove(log)} disabled={busy}>
         {state === 'approving' ? 'Aprobando…' : 'Aprobar'}
       </Button>
       <Button type="button" size="sm" variant="outline" onClick={() => onReject(log)} disabled={busy}>
@@ -88,7 +89,7 @@ function ReviewActions({ log, state, onApprove, onReject }: ReviewActionsProps) 
 interface ReviewListProps {
   logs: LocalHourLog[]
   actionState: Record<number, ActionState>
-  onApprove: (logId: number) => void
+  onApprove: (log: LocalHourLog) => void
   onReject: (log: LocalHourLog) => void
 }
 
@@ -263,8 +264,9 @@ export function ReviewHoursPage() {
   )
 
   const [actionState, setActionState] = useState<Record<number, ActionState>>({})
-  const [reviewError, setReviewError] = useState<string | null>(null)
   const [rejectingLog, setRejectingLog] = useState<LocalHourLog | null>(null)
+  // Evita abrir dos preguntas (y revisar dos veces) con un doble clic mientras la confirmación está abierta.
+  const confirming = useRef(false)
 
   function getReviewErrorMessage(err: unknown): string {
     if (err instanceof ApiError && err.statusCode === 403) {
@@ -277,7 +279,6 @@ export function ReviewHoursPage() {
   }
 
   async function reviewLog(logId: number, status: 'APPROVED' | 'REJECTED', note?: string) {
-    setReviewError(null)
     setActionState((prev) => ({ ...prev, [logId]: status === 'APPROVED' ? 'approving' : 'rejecting' }))
     try {
       await api(`/hour-logs/${logId}/review`, {
@@ -286,9 +287,34 @@ export function ReviewHoursPage() {
       })
       await syncNow()
       setActionState((prev) => ({ ...prev, [logId]: status === 'APPROVED' ? 'approved' : 'rejected' }))
+      exito(status === 'APPROVED' ? 'Horas aprobadas' : 'Registro devuelto al estudiante')
     } catch (err) {
-      setReviewError(getReviewErrorMessage(err))
+      // UX-4: un aviso que la persona tiene que leer (el mensaje en línea quedaba arriba de la lista, fuera de la
+      // vista). Se espera: los botones siguen deshabilitados hasta que se cierra.
+      await notifyError(
+        status === 'APPROVED' ? 'No se pudo aprobar las horas' : 'No se pudo devolver el registro',
+        getReviewErrorMessage(err),
+      )
       setActionState((prev) => ({ ...prev, [logId]: null }))
+    }
+  }
+
+  // Aprobar cuenta para el acta y no se puede deshacer: se pide confirmación. Devolver ya tiene su diálogo con la nota.
+  async function approve(log: LocalHourLog) {
+    if (confirming.current) return
+    confirming.current = true
+    try {
+      const { approvedHours, requiredHours } = hours
+      const completes = approvedHours + log.hours >= requiredHours
+      const completionNote = completes ? `Con estas horas la práctica llega a las ${requiredHours} requeridas y se completa. ` : ''
+      const accepted = await confirmar({
+        titulo: `¿Aprobar ${log.hours} h del ${formatDate(log.date)}?`,
+        texto: `${completionNote}Se suman ${log.hours} h a las ${approvedHours} aprobadas de ${requiredHours}. Esta decisión no se puede deshacer.`,
+        confirmar: 'Sí, aprobar',
+      })
+      if (accepted) await reviewLog(log.id, 'APPROVED')
+    } finally {
+      confirming.current = false
     }
   }
 
@@ -351,12 +377,6 @@ export function ReviewHoursPage() {
 
       <HoursProgressPanel hours={hours} note={pendingNote(pendingCount)} />
 
-      {reviewError ? (
-        <p role="alert" className="rounded-lg bg-chipVoid px-4 py-3 text-13 text-void">
-          {reviewError}
-        </p>
-      ) : null}
-
       <Panel
         toolbar={
           <span className="ml-auto font-data text-12 text-inkSoft">
@@ -367,7 +387,7 @@ export function ReviewHoursPage() {
         <ReviewList
           logs={logs}
           actionState={actionState}
-          onApprove={(logId) => reviewLog(logId, 'APPROVED')}
+          onApprove={approve}
           onReject={setRejectingLog}
         />
       </Panel>
