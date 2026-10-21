@@ -98,7 +98,7 @@ export default {
         row: '58px',
       },
       width: {
-        sidebar: '230px',
+        sidebar: '288px',
       },
     },
   },
