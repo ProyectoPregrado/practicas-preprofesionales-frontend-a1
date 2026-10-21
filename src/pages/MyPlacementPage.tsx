@@ -1,18 +1,22 @@
 import { useLiveQuery } from 'dexie-react-hooks'
+import { BookOpen, CheckCircle2, Hourglass, ShieldCheck } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Chip } from '@/components/Chip'
-import { HeroCard, HeroPanel } from '@/components/HeroPanel'
 import { PageHeader } from '@/components/PageHeader'
 import { EmptyState, LoadingState, Section } from '@/components/Panel'
-import { ProgressBar } from '@/components/ProgressBar'
-import { StatCard, StatGrid } from '@/components/StatCard'
+import { HoursHeroCard } from '@/components/placement/HoursHeroCard'
+import { KpiCard } from '@/components/placement/KpiCard'
+import { RequirementsList } from '@/components/placement/RequirementsList'
+import { WeeklyHoursChart } from '@/components/placement/WeeklyHoursChart'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Ledger } from '@/components/ledger/Ledger'
 import { LedgerRow } from '@/components/ledger/LedgerRow'
 import { parseLocalDate } from '@/lib/date'
-import { type HoursSummary, summarizeHours } from '@/lib/hours'
+import { type HoursSummary, averagePerRegisteredDay, summarizeHours } from '@/lib/hours'
+import { placementRequirements } from '@/lib/placementRequirements'
 import { plural } from '@/lib/utils'
+import { weekHours } from '@/lib/weekHours'
 import { db, type LocalDocument, type LocalHourLog } from '@/offline/db'
 import { useHourLogs } from '@/offline/hooks/useHourLogs'
 import { usePlacement } from '@/offline/hooks/usePlacement'
@@ -36,75 +40,65 @@ function DataRow({ label, children }: { label: string; children: React.ReactNode
   )
 }
 
-function PlacementHero({
+/** Documentos que activan la plaza: el convenio y el seguro. */
+const KEY_DOCUMENT_KINDS = ['AGREEMENT', 'INSURANCE']
+
+function PlacementKpis({
   hours,
-  pendingDocuments,
+  documents,
+  logs,
 }: {
   hours: HoursSummary
-  pendingDocuments: number
+  documents: LocalDocument[] | undefined
+  logs: LocalHourLog[] | undefined
 }) {
-  const remaining = Math.max(0, hours.requiredHours - hours.approvedHours)
+  const submittedLogs = logs?.filter((log) => log.status === 'SUBMITTED').length ?? 0
+  const validatedKeyDocuments = KEY_DOCUMENT_KINDS.filter((kind) =>
+    documents?.some((doc) => doc.kind === kind && doc.status === 'VALIDATED'),
+  ).length
+  const average = averagePerRegisteredDay(logs)
 
   return (
-    <HeroPanel
-      title={`Te faltan ${remaining.toFixed(1)} horas aprobadas`}
-      description="Registra tus horas el mismo día. Tu tutor las revisa y lo que apruebe cuenta para el acta final."
-      aside={
-        <>
-          <HeroCard label="Sin aprobar">
-            {hours.submittedHours.toFixed(1)} h esperando a tu tutor
-          </HeroCard>
-          <HeroCard label="Documentos">
-            {plural(pendingDocuments, 'documento pendiente', 'documentos pendientes')}
-          </HeroCard>
-        </>
-      }
-    >
-      <div className="flex items-center gap-3">
-        <ProgressBar
-          value={hours.approvedPct}
-          pendingValue={hours.submittedPct}
-          label="Progreso de horas aprobadas"
-          onTint
-        />
-        <span className="inline-flex h-[26px] flex-none items-center rounded-full bg-surface px-2.5 font-data text-12 font-semibold text-ink">
-          {Math.round(hours.approvedPct)}%
-        </span>
-      </div>
-    </HeroPanel>
-  )
-}
-
-function PlacementStats({
-  hours,
-  pendingDocuments,
-  logCount,
-}: {
-  hours: HoursSummary
-  pendingDocuments: number
-  logCount: number
-}) {
-  return (
-    <StatGrid>
-      <StatCard
+    <ul aria-label="Indicadores" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <KpiCard
         label="Horas aprobadas"
         value={hours.approvedHours.toFixed(1)}
-        note={`de ${hours.requiredHours}`}
+        unit={`/ ${hours.requiredHours} h`}
+        icon={CheckCircle2}
+        footnote={`${Math.round(hours.approvedPct)} % de la meta`}
       />
-      <StatCard
+      <KpiCard
         label="Sin revisar"
         value={hours.submittedHours.toFixed(1)}
-        note="con tu tutor"
-        noteTone="pending"
+        unit="h"
+        icon={Hourglass}
+        tone="pending"
+        footnote={
+          <>
+            <span className="rounded-full bg-chipPending px-2 py-0.5 text-11 font-semibold text-pending">
+              {plural(submittedLogs, 'registro', 'registros')}
+            </span>
+            <span>con tu tutor</span>
+          </>
+        }
       />
-      <StatCard
-        label="Documentos pendientes"
-        value={String(pendingDocuments)}
-        note="por validar"
-        noteTone={pendingDocuments > 0 ? 'pending' : 'neutral'}
+      <KpiCard
+        label="Documentos clave"
+        value={`${validatedKeyDocuments} / ${KEY_DOCUMENT_KINDS.length}`}
+        unit="validados"
+        icon={ShieldCheck}
+        tone="soft"
+        footnote="Convenio y seguro"
       />
-      <StatCard label="Registros" value={String(logCount)} note="en el libro" />
-    </StatGrid>
+      <KpiCard
+        label="Registros"
+        value={String(logs?.length ?? 0)}
+        unit="en el libro"
+        icon={BookOpen}
+        tone="soft"
+        footnote={average === null ? 'Aún sin registros' : `${average.toFixed(1)} h por día registrado`}
+      />
+    </ul>
   )
 }
 
@@ -249,30 +243,35 @@ export function MyPlacementPage() {
         }
       />
 
-      <PlacementHero hours={hours} pendingDocuments={pendingDocuments} />
+      <HoursHeroCard hours={hours} pendingDocuments={pendingDocuments} />
 
-      <PlacementStats
-        hours={hours}
-        pendingDocuments={pendingDocuments}
-        logCount={logs?.length ?? 0}
-      />
+      <PlacementKpis hours={hours} documents={documents} logs={logs} />
 
-      <Section title="Datos de la práctica">
-        <dl className="divide-y divide-paperRule">
-          <DataRow label="Empresa">Empresa #{placement.companyId}</DataRow>
-          <DataRow label="Tutor">Tutor #{placement.tutorId}</DataRow>
-          <DataRow label="Periodo">
-            <span className="font-data">{formatPeriod(placement.startDate, placement.endDate)}</span>
-          </DataRow>
-          <DataRow label="Estado">
-            <StatusBadge status={placement.status} />
-          </DataRow>
-        </dl>
-      </Section>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+        <div className="flex min-w-0 flex-col gap-4 xl:col-span-7">
+          <RecentLogs logs={logs} />
+          <WeeklyHoursChart week={weekHours(logs, new Date())} />
+        </div>
 
-      <PendingDocuments documents={documents} />
+        <div className="flex min-w-0 flex-col gap-4 xl:col-span-5">
+          <Section title="Datos de la práctica">
+            <dl className="divide-y divide-paperRule">
+              <DataRow label="Empresa">Empresa #{placement.companyId}</DataRow>
+              <DataRow label="Tutor">Tutor #{placement.tutorId}</DataRow>
+              <DataRow label="Periodo">
+                <span className="font-data">{formatPeriod(placement.startDate, placement.endDate)}</span>
+              </DataRow>
+              <DataRow label="Estado">
+                <StatusBadge status={placement.status} />
+              </DataRow>
+            </dl>
+          </Section>
 
-      <RecentLogs logs={logs} />
+          <RequirementsList items={placementRequirements({ documents, hours })} />
+
+          <PendingDocuments documents={documents} />
+        </div>
+      </div>
     </>
   )
 }

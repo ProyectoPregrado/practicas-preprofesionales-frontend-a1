@@ -6,12 +6,14 @@ interface ProgressBarProps {
   /** Porcentaje en trámite: se pinta detrás del anterior, en ámbar. */
   pendingValue?: number
   label: string
-  /** `sm` es la barra que va dentro de una fila de tabla. */
-  size?: 'sm' | 'md'
+  /** `sm` es la barra que va dentro de una fila de tabla; `lg`, la de la tarjeta de progreso. */
+  size?: 'sm' | 'md' | 'lg'
   /** Sobre fondos teñidos el canal tiene que ser blanco para verse. */
   onTint?: boolean
   className?: string
 }
+
+const SIZE_CLASSES = { sm: 'h-[5px]', md: 'h-2', lg: 'h-3.5' } as const
 
 export function ProgressBar({
   value,
@@ -30,7 +32,7 @@ export function ProgressBar({
       aria-label={label}
       className={cn(
         'flex w-full overflow-hidden rounded-full',
-        size === 'sm' ? 'h-[5px]' : 'h-2',
+        SIZE_CLASSES[size],
         onTint ? 'bg-surface' : 'bg-paperRule',
         className,
       )}
