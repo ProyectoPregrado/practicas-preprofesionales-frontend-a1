@@ -1,4 +1,4 @@
-import { Mic, MicOff, Sparkles } from 'lucide-react'
+import { Loader2, Mic, Square, Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import { type HourLogDraft, draftHourLog } from '@/api/ai'
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,7 @@ import { describeError } from '@/lib/describeError'
 import { todayAsInputValue } from '@/lib/hourLogHelpers'
 import { useOnline } from '@/offline/hooks/useOnline'
 import { AiModeTag } from './HintDot'
-import { useSpeechToText } from './useSpeechToText'
+import { type DictationState, useVoiceDictation } from './useVoiceDictation'
 
 interface FeedbackProps {
   online: boolean
@@ -41,6 +41,39 @@ function DraftFeedback({ online, result, error, speechError }: FeedbackProps) {
   )
 }
 
+interface DictateButtonProps {
+  state: DictationState
+  disabled: boolean
+  onStart: () => void
+  onStop: () => void
+}
+
+/** Un solo botón para las tres fases del dictado: grabar, detener y esperar la transcripción. */
+function DictateButton({ state, disabled, onStart, onStop }: DictateButtonProps) {
+  if (state === 'transcribing') {
+    return (
+      <Button type="button" size="sm" variant="outline" disabled>
+        <Loader2 aria-hidden="true" className="animate-spin" />
+        Transcribiendo…
+      </Button>
+    )
+  }
+  if (state === 'recording') {
+    return (
+      <Button type="button" size="sm" variant="outline" onClick={onStop}>
+        <Square aria-hidden="true" />
+        Detener
+      </Button>
+    )
+  }
+  return (
+    <Button type="button" size="sm" variant="outline" onClick={onStart} disabled={disabled}>
+      <Mic aria-hidden="true" />
+      Dictar
+    </Button>
+  )
+}
+
 interface DictateDayPanelProps {
   /** Recibe el borrador para llenar el formulario; la persona lo revisa antes de guardar. */
   onDraft: (draft: HourLogDraft) => void
@@ -56,11 +89,10 @@ export function DictateDayPanel({ onDraft }: DictateDayPanelProps) {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<HourLogDraft | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const speech = useSpeechToText((said) => setText((prev) => (prev ? `${prev} ${said}` : said)))
-  const canComplete = online && !loading && text.trim() !== ''
+  const dictation = useVoiceDictation((said) => setText((prev) => (prev ? `${prev} ${said}` : said)))
+  const canComplete = online && !loading && dictation.state === 'idle' && text.trim() !== ''
 
   async function complete() {
-    speech.stop()
     setLoading(true)
     setError(null)
     try {
@@ -94,20 +126,19 @@ export function DictateDayPanel({ onDraft }: DictateDayPanelProps) {
         disabled={!online}
       />
       <div className="flex flex-wrap items-center gap-2">
-        {speech.supported ? (
-          <Button type="button" size="sm" variant="outline" onClick={speech.listening ? speech.stop : speech.start} disabled={!online}>
-            {speech.listening ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
-            {speech.listening ? 'Detener dictado' : 'Dictar'}
-          </Button>
+        {dictation.supported ? (
+          <DictateButton state={dictation.state} disabled={!online} onStart={dictation.start} onStop={dictation.stop} />
         ) : null}
         <Button type="button" size="sm" onClick={complete} disabled={!canComplete}>
           <Sparkles aria-hidden="true" />
           {loading ? 'Completando…' : 'Completar con IA'}
         </Button>
-        {speech.listening ? <span className="text-12 font-semibold text-void">● Escuchando…</span> : null}
+        {dictation.state === 'recording' ? (
+          <span className="text-12 font-semibold text-void">● Grabando… pulsa «Detener» al terminar</span>
+        ) : null}
         {result ? <AiModeTag aiUsed={result.aiUsed} /> : null}
       </div>
-      <DraftFeedback online={online} result={result} error={error} speechError={speech.error} />
+      <DraftFeedback online={online} result={result} error={error} speechError={dictation.error} />
     </section>
   )
 }
