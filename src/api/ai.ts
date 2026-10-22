@@ -55,6 +55,13 @@ export function draftHourLog(text: string, today: string): Promise<HourLogDraft>
   return api<HourLogDraft>('/ai/hour-log-draft', { method: 'POST', body: JSON.stringify({ text, today }) })
 }
 
+/** IA-3: el audio del dictado (WAV), transcrito por la IA del servidor. */
+export function transcribeAudio(audio: Blob): Promise<{ text: string }> {
+  const form = new FormData()
+  form.append('audio', audio, 'dictado.wav')
+  return api<{ text: string }>('/ai/transcribe', { method: 'POST', body: form })
+}
+
 /** Semáforo de los registros sin revisar de una práctica. */
 export function getReviewHints(placementId: number): Promise<ReviewHintsResult> {
   return api<ReviewHintsResult>(`/ai/placements/${placementId}/review-hints`)
